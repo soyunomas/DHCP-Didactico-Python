@@ -1,0 +1,21 @@
+{
+  "server_ip": "192.168.1.1",
+  "interface": "eno1",
+  "dns_servers": ["8.8.8.8", "8.8.4.4"],
+  "domain_name": "home.local",
+  "lease_time_seconds": 3600,
+  "subnet": {
+    "network": "192.168.1.0",
+    "mask": "255.255.255.0",
+    "pool_start": "192.168.1.100",
+    "pool_end": "192.168.1.200",
+    "gateway": "192.168.1.1"
+  },
+  "reservations": {
+    "aa:bb:cc:dd:ee:ff": "192.168.1.50",
+    "00:11:22:33:44:55": "192.168.1.51"
+  },
+  "blocked_macs": [
+    "ff:ff:ff:ff:ff:fe"
+  ]
+}
