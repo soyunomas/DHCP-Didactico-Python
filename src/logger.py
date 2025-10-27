@@ -6,7 +6,7 @@ class DhcpLogger:
         self.mode = mode
         self.server_ip = server_ip
         self.lock = lock if lock else threading.Lock()
-        if self.mode != 'chat':
+        if self.mode != 'chat' and self.mode != 'profesional': # <-- Pequeño ajuste aquí
             print(f"--- Logger inicializado en modo: {self.mode} ---")
 
     def _get_prefix(self, convo_id):
@@ -26,8 +26,8 @@ class DhcpLogger:
     def _separator(self):
         self._safe_print(f"{'-' * 70}")
 
-    # <<< MEJORA: Se añade el parámetro hostname.
     def log_discover(self, mac, hostname=None, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         client_id = f"{hostname} ({mac})" if hostname else mac
         messages = {
             'chat': ('💻 Cliente', f"¡Hola a todos! Soy {client_id}. ¿Alguien tiene una dirección IP?"),
@@ -38,6 +38,7 @@ class DhcpLogger:
         self._log(speaker, msg, convo_id)
 
     def log_offer(self, mac, ip, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         messages = {
             'chat': ('🌐 Servidor', f"¡Hola, {mac}! Te ofrezco la dirección {ip}. Si te interesa, solicítala formalmente."),
             'docente': ('👨‍🏫 Servidor', f"DHCPOFFER: Respondemos a {mac} proponiendo la dirección IP {ip} para su uso."),
@@ -47,8 +48,8 @@ class DhcpLogger:
         self._log(speaker, msg, convo_id)
         self._separator()
 
-    # <<< MEJORA: Se añade el parámetro hostname.
     def log_request(self, mac, ip, server_id, leads_to_nak, is_for_other_server, hostname=None, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         server_display = server_id if server_id else self.server_ip
         client_id = f"{hostname} ({mac})" if hostname else mac
         
@@ -66,6 +67,7 @@ class DhcpLogger:
         self._log(speaker, msg, convo_id)
 
     def log_renewal_request(self, mac, ip, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         messages = {
             'chat': ('💻 Cliente', f"Hola de nuevo. Mi concesión para {ip} va a caducar. ¿Puedo renovarla?"),
             'docente': ('🎓 Cliente', f"DHCPREQUEST (Renovación): El cliente {mac} quiere extender su concesión para {ip}."),
@@ -75,6 +77,7 @@ class DhcpLogger:
         self._log(speaker, msg, convo_id)
 
     def log_ack(self, mac, ip, convo_id=None, is_renewal=False):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         chat_msg = f"¡Confirmado, {mac}! La dirección IP {ip} es tuya. ¡Bienvenido a la red!"
         docente_msg = f"DHCPACK: Trato hecho. La IP {ip} queda asignada oficialmente a {mac}."
         colegas_msg = f"ACK para {mac} con la {ip}. Concesión cerrada. A otra cosa."
@@ -87,6 +90,7 @@ class DhcpLogger:
         self._log(speaker, msg, convo_id)
 
     def log_nak(self, mac, ip, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         messages = {
             'chat': ('🌐 Servidor', f"¡Lo siento, {mac}! La IP {ip} que pides no es válida. Debes iniciar el proceso de nuevo."),
             'docente': ('👨‍🏫 Servidor', f"DHCPNAK: Solicitud denegada. La IP {ip} no es válida para {mac} en este contexto."),
@@ -96,8 +100,8 @@ class DhcpLogger:
         self._log(speaker, msg, convo_id)
         self._separator()
 
-    # <<< NUEVA FUNCIÓN: Para registrar los mensajes DHCPDECLINE.
     def log_decline(self, mac, ip, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         messages = {
             'chat': ('💻 Cliente', f"¡Servidor, hay un problema! La IP {ip} que me diste ya la está usando alguien. La rechazo."),
             'docente': ('🎓 Cliente', f"DHCPDECLINE: El cliente {mac} detectó un conflicto con la IP {ip} y la ha rechazado."),
@@ -108,6 +112,7 @@ class DhcpLogger:
         self._separator()
 
     def log_db_update(self, mac, ip, expires_at, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         messages = {
             'chat': ('⚙️ Sistema', f"Registro actualizado: {mac} tiene la IP {ip} hasta {expires_at}."),
             'docente': ('⚙️ Sistema', f"Base de Datos: Se registra la concesión. MAC: {mac}, IP: {ip}."),
@@ -118,6 +123,7 @@ class DhcpLogger:
         self._separator()
 
     def log_request_ignored(self, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         messages = {
             'chat': ('⚙️ Sistema', "Esa solicitud era para otro servidor, así que la ignoramos."),
             'docente': ('⚙️ Sistema', "Análisis: El REQUEST no era para nuestro servidor_id. Se ignora el paquete."),
@@ -128,6 +134,7 @@ class DhcpLogger:
         self._separator()
         
     def log_blocked(self, mac, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         messages = {
             'chat': ('⚙️ Sistema', f"La MAC {mac} está en la lista de bloqueo. Petición ignorada."),
             'docente': ('⚙️ Sistema', f"Seguridad: La MAC {mac} está bloqueada. Ignorando su petición."),
@@ -138,6 +145,7 @@ class DhcpLogger:
         self._separator()
         
     def log_no_ips_available(self, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         messages = {
             'chat': ('⚙️ Sistema', "No quedan direcciones IP disponibles en el pool para ofrecer."),
             'docente': ('⚙️ Sistema', "Alerta: El pool de direcciones IP está agotado. No se pueden dar nuevas concesiones."),
@@ -148,6 +156,7 @@ class DhcpLogger:
         self._separator()
 
     def log_release(self, mac, convo_id=None):
+        if self.mode == 'profesional': return # <<< CORRECCIÓN
         messages = {
             'chat': ('💻 Cliente', f"Ya no necesito la dirección IP. ¡Gracias por todo!"),
             'docente': ('🎓 Cliente', f"DHCPRELEASE: El cliente {mac} ha liberado su concesión de IP de forma voluntaria."),
@@ -158,17 +167,19 @@ class DhcpLogger:
         self._separator()
 
     def log_new_conversation(self, mac, convo_number):
+        if self.mode == 'profesional': return # <<< CORRECIÓNN
         convo_id = f"Conversación #{convo_number}"
         msg = f"Asignando nuevo ID de conversación al cliente {mac}."
         self._log('⚙️ Sistema', msg, convo_id)
 
     def log_rogue_server_detected(self, rogue_mac, rogue_ip):
+        # Esta es una alerta importante, siempre se muestra.
         messages = {
             'chat': ('🚨 ALERTA', f"¡Cuidado! Se ha detectado otro servidor DHCP ({rogue_ip}) en la red. Esto puede causar conflictos."),
             'docente': ('🛡️ SEGURIDAD', f"ALERTA: Detectado tráfico de un servidor DHCP no autorizado en {rogue_ip} ({rogue_mac})."),
-            'colegas': ('🕵️‍♂️ OJO', f"¡Al loro! Hay otro DHCP server en {rogue_ip} ({rogue_mac}) metiendo ruido. A ver quién es.")
+            'colegas': ('🕵️‍♂️ OJO', f"¡Al loro! Hay otro DHCP server en {rogue_ip} ({rogue_mac}) metiendo ruido. A ver quién es."),
+            'profesional': ('🚨 ALERTA DE SEGURIDAD', f"Detectado servidor DHCP no autorizado. IP: {rogue_ip}, MAC: {rogue_mac}.")
         }
         speaker, msg = messages[self.mode]
-        # Esta es una alerta importante, no necesita un ID de conversación
         self._log(speaker, msg, None)
         self._separator()
