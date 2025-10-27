@@ -2,11 +2,19 @@
 import sqlite3
 import time
 from ipaddress import IPv4Address
+import os # <<< MEJORA: Importamos el módulo 'os'
 
 class LeaseDatabase:
     def __init__(self, db_path='data/dhcp_leases.db', lock=None):
         if not lock:
             raise ValueError("Se requiere un objeto Lock para la base de datos.")
+        
+        # <<< MEJORA: Asegurarse de que el directorio de la base de datos exista.
+        db_dir = os.path.dirname(db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        # --- Fin de la mejora ---
+
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.cursor = self.conn.cursor()
         self.lock = lock
