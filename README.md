@@ -112,23 +112,22 @@ DHCP-Didactico-Python/
     *   `subnet`: Define el rango de IPs (`pool_start`, `pool_end`) que el servidor podrá asignar.
 
 4.  **Ejecuta el servidor:**
-    El servidor necesita privilegios de administrador para escuchar en los puertos DHCP (67/68) y enviar paquetes a bajo nivel.
 
-    *   **Modo por defecto (profesional/silencioso):**
-        ```bash
-        sudo python3 src/server.py
-        ```
+    > **Nota importante sobre `sudo` y Módulos de Python:**
+    > El servidor necesita privilegios de administrador (`sudo`). Además, como nuestro proyecto está estructurado con el código fuente dentro de un directorio `src/`, debemos decirle a Python que ejecute nuestro código como un **módulo** usando el flag `-m`. Esto asegura que los `imports` como `from src.database ...` funcionen correctamente desde la raíz del proyecto.
 
-    *   **Con un modo de logging específico:**
-        ```bash
-        sudo python3 src/server.py --modo-docente
+      ```bash
+        # Modo por defecto (profesional/silencioso)
+        sudo venv/bin/python3 -m src.server
+
+        # Con un modo de logging específico
+        sudo venv/bin/python3 -m src.server --modo-docente
         # O
-        sudo python3 src/server.py --modo-colegas
+        sudo venv/bin/python3 -m src.server --modo-colegas
         # O
-        sudo python3 src/server.py --modo-chat
-        ```
-    ¡Ahora, conecta un nuevo dispositivo a la red o reinicia la interfaz de red de un cliente para ver la magia en acción!
-
+        sudo venv/bin/python3 -m src.server --modo-chat
+     ```
+        
 ## 💡 Cómo Funciona
 
 *   **`server.py`**: Es el punto de entrada. Utiliza **Scapy** para `sniff` (capturar) el tráfico DHCP en la interfaz especificada. Cada paquete capturado se procesa en un hilo separado para manejar múltiples clientes simultáneamente.
