@@ -4,9 +4,8 @@ from ipaddress import IPv4Address
 from src.logger import DhcpLogger
 import time
 import threading
-from enum import IntEnum # <<< MEJORA: Importamos Enum para evitar números mágicos
+from enum import IntEnum
 
-# <<< MEJORA: Usamos una clase Enum para que el código sea más legible.
 class DHCPMessageType(IntEnum):
     DISCOVER = 1
     OFFER = 2
@@ -38,8 +37,8 @@ class DHCPHandler:
             print(f"[ERROR CRÍTICO] No se pudo obtener la MAC de la interfaz '{config['interface']}'. Error: {e}")
             exit(1)
 
-        if log_mode != 'chat':
-            print(f"[INIT] Handler iniciado. MAC de origen: {self.iface_mac}")
+        if log_mode != 'profesional':
+            print(f"--- Logger inicializado en modo: {log_mode} ---")
 
     def _get_convo_id(self, mac):
         with self.lock:
@@ -82,23 +81,31 @@ class DHCPHandler:
         
         msg_type = msg_type_opt[1]
         
-        # <<< MEJORA: Usamos el Enum en lugar de números.
         if msg_type == DHCPMessageType.DISCOVER:
             return self._handle_discover(pkt, convo_id)
         elif msg_type == DHCPMessageType.REQUEST:
             return self._handle_request(pkt, convo_id)
         elif msg_type == DHCPMessageType.RELEASE:
-            self.logger.log_release(src_mac, convo_id)
+            # <<< MEJORA: Obtenemos la IP antes de borrarla para el histórico
+            lease = self.db.get_lease(src_mac)
+            if lease:
+                self.db.add_history_log(src_mac, lease['ip'], 'RELEASE')
+                self.logger.log_db_history_update(src_mac, lease['ip'], 'RELEASE', convo_id)
+            # --- Fin de la mejora ---
             self.db.release_lease(src_mac)
+            self.logger.log_release(src_mac, convo_id)
             self._clear_convo_id(src_mac)
             return None
-        # <<< MEJORA: Implementamos el manejo de DHCPDECLINE.
         elif msg_type == DHCPMessageType.DECLINE:
-            requested_ip = next((opt[1] for opt in pkt[DHCP].options if opt[0] == 'requested_addr'), pkt[BOOTP].ciaddr)
-            self.logger.log_decline(src_mac, requested_ip, convo_id)
-            # Aquí se debería añadir una lógica para marcar la IP como en conflicto en la BD.
-            # Por simplicidad, por ahora solo liberamos la concesión si existiera.
-            self.db.release_lease(src_mac)
+            requested_ip_opt = next((opt for opt in pkt[DHCP].options if opt[0] == 'requested_addr'), None)
+            declined_ip = requested_ip_opt[1] if requested_ip_opt else "N/A"
+            self.db.release_lease(src_mac) 
+            # <<< MEJORA: Registramos el evento DECLINE en el histórico
+            if declined_ip != "N/A":
+                self.db.add_history_log(src_mac, declined_ip, 'DECLINE')
+                self.logger.log_db_history_update(src_mac, declined_ip, 'DECLINE', convo_id)
+            # --- Fin de la mejora ---
+            self.logger.log_decline(src_mac, declined_ip, convo_id)
             self._clear_convo_id(src_mac)
             return None
         
@@ -106,9 +113,15 @@ class DHCPHandler:
 
     def _craft_response_packet(self, request_pkt, yiaddr, dest_ip="255.255.255.255", dest_mac="ff:ff:ff:ff:ff:ff"):
         use_broadcast = request_pkt[BOOTP].flags & 0x8000
-        if not use_broadcast and request_pkt[BOOTP].ciaddr != '0.0.0.0':
+        ciaddr_is_set = request_pkt[BOOTP].ciaddr != '0.0.0.0'
+
+        if not use_broadcast and ciaddr_is_set:
              dest_ip = request_pkt[BOOTP].ciaddr
              dest_mac = request_pkt[Ether].src
+
+        if request_pkt[BOOTP].giaddr != '0.0.0.0':
+            dest_ip = request_pkt[BOOTP].giaddr
+            dest_mac = "ff:ff:ff:ff:ff:ff"
 
         return (
             Ether(src=self.iface_mac, dst=dest_mac) /
@@ -123,9 +136,8 @@ class DHCPHandler:
     def _handle_discover(self, pkt, convo_id):
         client_mac = pkt[Ether].src
         
-        # <<< MEJORA: Extraer el nombre de host (Opción 12) del cliente.
         hostname_opt = next((opt for opt in pkt[DHCP].options if opt[0] == 'hostname'), None)
-        hostname = hostname_opt[1].decode() if hostname_opt else None
+        hostname = hostname_opt[1].decode(errors='ignore') if hostname_opt else None
 
         if client_mac in self.config.get('blocked_macs', []):
             self.logger.log_blocked(client_mac, convo_id)
@@ -148,7 +160,6 @@ class DHCPHandler:
             
         self.logger.log_offer(client_mac, ip_to_offer, convo_id)
         response_pkt = self._craft_response_packet(pkt, ip_to_offer)
-        # <<< MEJORA: El tipo de mensaje ahora viene del Enum.
         response_pkt /= DHCP(options=[("message-type", DHCPMessageType.OFFER), ("server_id", self.server_ip), ("lease_time", self.config['lease_time_seconds']), ("subnet_mask", self.config['subnet']['mask']), ("router", self.config['subnet']['gateway']), ("name_server", *self.config['dns_servers']), ("domain", self.config['domain_name'].encode()), "end"])
         return response_pkt
 
@@ -156,17 +167,20 @@ class DHCPHandler:
         client_mac = pkt[Ether].src
         client_ip_from_ciaddr = pkt[BOOTP].ciaddr
         
-        # <<< MEJORA: Extraer el nombre de host (Opción 12) también en el REQUEST.
         hostname_opt = next((opt for opt in pkt[DHCP].options if opt[0] == 'hostname'), None)
-        hostname = hostname_opt[1].decode() if hostname_opt else None
+        hostname = hostname_opt[1].decode(errors='ignore') if hostname_opt else None
 
         if client_ip_from_ciaddr != '0.0.0.0': # Proceso de renovación
             self.logger.log_renewal_request(client_mac, client_ip_from_ciaddr, convo_id)
             
             lease = self.db.get_lease(client_mac)
             if lease and lease['ip'] == client_ip_from_ciaddr:
-                self.logger.log_ack(client_mac, client_ip_from_ciaddr, convo_id, is_renewal=True)
                 self.db.add_lease(client_mac, client_ip_from_ciaddr, self.config['lease_time_seconds'])
+                # <<< MEJORA: Registramos la renovación en el histórico
+                self.db.add_history_log(client_mac, client_ip_from_ciaddr, 'RENEW')
+                self.logger.log_db_history_update(client_mac, client_ip_from_ciaddr, 'RENEW', convo_id)
+                # --- Fin de la mejora ---
+                self.logger.log_ack(client_mac, client_ip_from_ciaddr, convo_id, is_renewal=True)
                 
                 response_pkt = self._craft_response_packet(pkt, client_ip_from_ciaddr)
                 response_pkt /= DHCP(options=[("message-type", DHCPMessageType.ACK), ("server_id", self.server_ip), ("lease_time", self.config['lease_time_seconds']), ("subnet_mask", self.config['subnet']['mask']), ("router", self.config['subnet']['gateway']), ("name_server", *self.config['dns_servers']), ("domain", self.config['domain_name'].encode()), "end"])
@@ -174,12 +188,15 @@ class DHCPHandler:
                 return response_pkt
             else:
                 self.logger.log_nak(client_mac, client_ip_from_ciaddr, convo_id)
-                self._clear_convo_id(client_mac) # Limpiamos conversación tras NAK
+                self._clear_convo_id(client_mac)
                 return self._handle_nak(pkt)
         
         else: # Proceso de asignación inicial (selección)
-            requested_ip = next((opt[1] for opt in pkt[DHCP].options if opt[0] == 'requested_addr'), None)
-            server_id = next((opt[1] for opt in pkt[DHCP].options if opt[0] == 'server_id'), None)
+            requested_ip_opt = next((opt for opt in pkt[DHCP].options if opt[0] == 'requested_addr'), None)
+            requested_ip = requested_ip_opt[1] if requested_ip_opt else None
+            
+            server_id_opt = next((opt for opt in pkt[DHCP].options if opt[0] == 'server_id'), None)
+            server_id = server_id_opt[1] if server_id_opt else None
             
             is_for_other_server = server_id and server_id != self.server_ip
             is_valid = self._validate_requested_ip(client_mac, requested_ip)
@@ -193,11 +210,15 @@ class DHCPHandler:
                 
             if not is_valid:
                 self.logger.log_nak(client_mac, requested_ip, convo_id)
-                self._clear_convo_id(client_mac) # Limpiamos conversación tras NAK
+                self._clear_convo_id(client_mac)
                 return self._handle_nak(pkt)
 
-            self.logger.log_ack(client_mac, requested_ip, convo_id, is_renewal=False)
             self.db.add_lease(client_mac, requested_ip, self.config['lease_time_seconds'])
+            # <<< MEJORA: Registramos la asignación en el histórico
+            self.db.add_history_log(client_mac, requested_ip, 'ASSIGN')
+            self.logger.log_db_history_update(client_mac, requested_ip, 'ASSIGN', convo_id)
+            # --- Fin de la mejora ---
+            self.logger.log_ack(client_mac, requested_ip, convo_id, is_renewal=False)
             
             lease_info = self.db.get_lease(client_mac)
             if lease_info:
@@ -212,10 +233,9 @@ class DHCPHandler:
         if not ip or ip == '0.0.0.0': return False
         if self.config['reservations'].get(mac) == ip: return True
         
-        # Un cliente puede solicitar una IP que tuvo antes. Si está libre, se la damos.
         active_leases = self.db.get_active_leases()
         if ip in active_leases and active_leases[ip] != mac:
-            return False # La IP está en uso por otro cliente
+            return False 
         
         try:
             pool_start = int(IPv4Address(self.config['subnet']['pool_start']))
@@ -224,7 +244,6 @@ class DHCPHandler:
         except ValueError: 
             return False
             
-        # Validar si está en el pool o es una reserva
         if pool_start <= req_ip_int <= pool_end or ip in self.config['reservations'].values():
             return True
                 
@@ -232,6 +251,5 @@ class DHCPHandler:
         
     def _handle_nak(self, pkt):
         response_pkt = self._craft_response_packet(pkt, '0.0.0.0')
-        # <<< MEJORA: Usamos el Enum.
         response_pkt /= DHCP(options=[("message-type", DHCPMessageType.NAK), ("server_id", self.server_ip), "end"])
         return response_pkt

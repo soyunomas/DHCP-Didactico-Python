@@ -2,23 +2,22 @@
 import sqlite3
 import time
 from ipaddress import IPv4Address
-import os # <<< MEJORA: Importamos el módulo 'os'
+import os
 
 class LeaseDatabase:
     def __init__(self, db_path='data/dhcp_leases.db', lock=None):
         if not lock:
             raise ValueError("Se requiere un objeto Lock para la base de datos.")
         
-        # <<< MEJORA: Asegurarse de que el directorio de la base de datos exista.
         db_dir = os.path.dirname(db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
-        # --- Fin de la mejora ---
 
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.cursor = self.conn.cursor()
         self.lock = lock
         self._create_table()
+        self._create_history_table() # <<< MEJORA: Llamamos a la creación de la nueva tabla
 
     def _create_table(self):
         with self.lock:
@@ -30,6 +29,32 @@ class LeaseDatabase:
                 )
             ''')
             self.conn.commit()
+
+    # <<< MEJORA: Nuevo método para crear la tabla de histórico >>>
+    def _create_history_table(self):
+        with self.lock:
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS leases_history (
+                    history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mac TEXT NOT NULL,
+                    ip_address TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_timestamp INTEGER NOT NULL
+                )
+            ''')
+            self.conn.commit()
+    # --- Fin de la mejora ---
+
+    # <<< MEJORA: Nuevo método para añadir un registro al histórico >>>
+    def add_history_log(self, mac, ip, event_type):
+        event_timestamp = int(time.time())
+        with self.lock:
+            self.cursor.execute(
+                "INSERT INTO leases_history (mac, ip_address, event_type, event_timestamp) VALUES (?, ?, ?, ?)",
+                (mac, ip, event_type, event_timestamp)
+            )
+            self.conn.commit()
+    # --- Fin de la mejora ---
 
     def add_lease(self, mac, ip, lease_time):
         expires_at = int(time.time()) + lease_time
@@ -52,7 +77,6 @@ class LeaseDatabase:
         with self.lock:
             self.cursor.execute("DELETE FROM leases WHERE mac = ?", (mac,))
             self.conn.commit()
-        print(f"[DB] Concesión liberada para MAC: {mac}")
 
     def get_active_leases(self):
         with self.lock:
