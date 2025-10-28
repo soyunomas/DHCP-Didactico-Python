@@ -11,44 +11,47 @@ Este proyecto nace de la necesidad de visualizar y desmitificar las comunicacion
 *   **Implementación Completa del Flujo DORA:** Manejo del ciclo completo `Discover`, `Offer`, `Request` y `Ack`.
 *   **Gestión Avanzada de Concesiones:** Soporte para renovaciones, liberaciones (`DHCPRELEASE`), denegaciones (`DHCPNAK`) y gestión de conflictos (`DHCPDECLINE`).
 *   **Múltiples Modos de Logging:** La característica estrella del proyecto. Elige entre diferentes "narradores" para entender la conversación:
-    *   **`--modo-docente`**: Explicaciones formales y técnicas de cada paso del protocolo.
-    *   **`--modo-colegas`**: Una jerga técnica e informal, como si lo hablaras con un compañero de redes.
-    *   **`--modo-chat`**: Visualiza la asignación de IP como una conversación de chat entre el cliente y el servidor.
+    *   **`--modo-docente`**: Una narración técnica y formal que explica cada paso del protocolo como si fuera una clase de redes.
+    *   **`--modo-colegas`**: Visualiza la asignación de IP como un chat directo entre un cliente y un servidor con jerga técnica e informal.
+    *   **`--modo-chat`**: La conversación original, amigable y fácil de seguir, entre un cliente y un servidor.
 *   **Configuración Centralizada:** Toda la configuración del servidor (pool de IPs, reservas estáticas, DNS, etc.) se gestiona desde un único archivo `config.json`.
 *   **Base de Datos Persistente:** Utiliza SQLite para guardar y gestionar el estado de las concesiones de IP de forma concurrente y segura.
+*   **Historial de Eventos:** Guarda un registro persistente de todas las asignaciones, renovaciones, liberaciones y conflictos en la base de datos para auditoría.
 *   **Soporte para DHCP Relay:** El servidor es compatible con el campo `giaddr`, permitiendo su funcionamiento en redes más complejas con múltiples VLANs (requiere un agente de retransmisión configurado en el router).
 
 ## 🚀 Demostración de los Modos de Logging
 
 Esta es la magia del proyecto. Observa cómo se narra la misma conversación DHCP de tres formas distintas:
 
-### `--modo-docente` (Explicativo)
+### `--modo-docente` (Narración Técnica)
 ```text
 --- Logger inicializado en modo: docente ---
 Servidor listo. Escuchando peticiones DHCP...
 ----------------------------------------------------------------------
-[Conversación #1] ⚙️ Sistema:        Asignando nuevo ID de conversación al cliente 0a:1b:2c:3d:4e:5f.
-[Conversación #1] 🎓 Cliente:        DHCPDISCOVER: Un cliente (Mi-PC (0a:1b:2c:3d:4e:5f)) emite un broadcast buscando servidores DHCP.
-[Conversación #1]   👨‍🏫 Servidor:      DHCPOFFER: Respondemos a 0a:1b:2c:3d:4e:5f proponiendo la dirección IP 192.168.1.100 para su uso.
+[Conversación #1] ⚙️ Sistema (Contexto):     Iniciando seguimiento de una nueva transacción DHCP para el cliente 0a:1b:2c:3d:4e:5f.
+[Conversación #1] 🎓 Cliente (Análisis):     El cliente emite un broadcast DHCPDISCOVER (destino L2: ff:ff:ff:ff:ff:ff) buscando servidores.
+[Conversación #1]   👨‍🏫 Servidor (Acción):    Construimos un DHCPOFFER para 0a:1b:2c:3d:4e:5f, proponiendo la IP 192.168.1.100 y las opciones de red (máscara, gateway...).
 ----------------------------------------------------------------------
-[Conversación #1] 🎓 Cliente:        DHCPREQUEST: El cliente Mi-PC (0a:1b:2c:3d:4e:5f) responde, solicitando formalmente la IP 192.168.1.100 del servidor 192.168.1.1.
-[Conversación #1]   👨‍🏫 Servidor:      DHCPACK: Trato hecho. La IP 192.168.1.100 queda asignada oficialmente a 0a:1b:2c:3d:4e:5f.
-[Conversación #1] ⚙️ Sistema:        Base de Datos: Se registra la concesión. MAC: 0a:1b:2c:3d:4e:5f, IP: 192.168.1.100.
+[Conversación #1] 🎓 Cliente (Análisis):     El cliente emite un DHCPREQUEST (broadcast) seleccionando la oferta del servidor 192.168.1.1 para la IP 192.168.1.100.
+[Conversación #1] ⚙️ Sistema (Auditoría):    Se registra el evento 'ASSIGN' en el histórico para MAC 0a:1b:2c:3d:4e:5f e IP 192.168.1.100.
+[Conversación #1]   👨‍🏫 Servidor (Acción):    Enviamos un DHCPACK. La IP 192.168.1.100 queda oficialmente asignada a 0a:1b:2c:3d:4e:5f. Transacción completada.
+[Conversación #1] ⚙️ Sistema (Registro):     Se escribe la concesión en la base de datos: MAC=0a:1b:2c:3d:4e:5f, IP=192.168.1.100.
 ----------------------------------------------------------------------
 ```
 
-### `--modo-colegas` (Informal)
+### `--modo-colegas` (Chat Técnico Informal)
 ```text
 --- Logger inicializado en modo: colegas ---
 Servidor listo. Escuchando peticiones DHCP...
 ----------------------------------------------------------------------
-[Conversación #1] ⚙️ Sistema:        Asignando nuevo ID de conversación al cliente 0a:1b:2c:3d:4e:5f.
-[Conversación #1] 👷‍♂️ Cliente:       DISCOVER en la línea de Mi-PC (0a:1b:2c:3d:4e:5f). Está pidiendo IP a gritos.
-[Conversación #1]   🔧 Servidor:      OFFER para 0a:1b:2c:3d:4e:5f. Le guardamos la 192.168.1.100. A ver si la pilla.
+[Conversación #1] ⚙️ Sistema (Log):          Nuevo ticket para el cliente 0a:1b:2c:3d:4e:5f.
+[Conversación #1] 👷‍♂️ Cliente:               Broadcast a la red. Soy Mi-PC (0a:1b:2c:3d:4e:5f), necesito una IP. ¿Alguien por ahí?
+[Conversación #1]   🔧 Servidor:             Te copio, 0a:1b:2c:3d:4e:5f. Te ofrezco la 192.168.1.100. Mándame un REQUEST si la quieres.
 ----------------------------------------------------------------------
-[Conversación #1] 👷‍♂️ Cliente:       REQUEST de Mi-PC (0a:1b:2c:3d:4e:5f). Quiere la 192.168.1.100 de 192.168.1.1. Se ha decidido.
-[Conversación #1]   🔧 Servidor:      ACK para 0a:1b:2c:3d:4e:5f con la 192.168.1.100. Concesión cerrada. A otra cosa.
-[Conversación #1] ⚙️ Sistema:        DB actualizada. 0a:1b:2c:3d:4e:5f -> 192.168.1.100. Que no se nos olvide.
+[Conversación #1] 👷‍♂️ Cliente:               ¡Buena, server 192.168.1.1! Me quedo con tu oferta. Dame la 192.168.1.100, porfa.
+[Conversación #1] ⚙️ Sistema (Auditoría):    Evento 'ASSIGN' de 0a:1b:2c:3d:4e:5f con 192.168.1.100 guardado en el histórico.
+[Conversación #1]   🔧 Servidor:             Hecho. La 192.168.1.100 es tuya. A currar.
+[Conversación #1] ⚙️ Sistema (Log):          DB actualizada. 0a:1b:2c:3d:4e:5f -> 192.168.1.100. Fichado.
 ----------------------------------------------------------------------
 ```
 
@@ -62,6 +65,7 @@ Servidor listo. Escuchando peticiones DHCP...
 [Conversación #1]   🌐 Servidor:      ¡Hola, 0a:1b:2c:3d:4e:5f! Te ofrezco la dirección 192.168.1.100. Si te interesa, solicítala formalmente.
 ----------------------------------------------------------------------
 [Conversación #1] 💻 Cliente:        ¡Servidor 192.168.1.1, acepto tu oferta! Solicito formalmente la IP 192.168.1.100.
+[Conversación #1] ⚙️ Sistema:        Guardando en el histórico: El cliente 0a:1b:2c:3d:4e:5f ha realizado un ASSIGN para la IP 192.168.1.100.
 [Conversación #1]   🌐 Servidor:      ¡Confirmado, 0a:1b:2c:3d:4e:5f! La dirección IP 192.168.1.100 es tuya. ¡Bienvenido a la red!
 [Conversación #1] ⚙️ Sistema:        Registro actualizado: 0a:1b:2c:3d:4e:5f tiene la IP 192.168.1.100 hasta Tue Oct 28 02:07:00 2025.
 ----------------------------------------------------------------------
@@ -73,7 +77,7 @@ DHCP-Didactico-Python/
 ├── config/
 │   └── config.json         # Archivo de configuración principal
 ├── data/
-│   └── dhcp_leases.db      # Base de datos SQLite de concesiones
+│   └── dhcp_leases.db      # Base de datos SQLite de concesiones e histórico
 ├── src/
 │   ├── __init__.py
 │   ├── database.py         # Módulo de gestión de la base de datos
@@ -132,7 +136,7 @@ DHCP-Didactico-Python/
 
 *   **`server.py`**: Es el punto de entrada. Utiliza **Scapy** para `sniff` (capturar) el tráfico DHCP en la interfaz especificada. Cada paquete capturado se procesa en un hilo separado para manejar múltiples clientes simultáneamente.
 *   **`dhcp_handler.py`**: Es el cerebro. Analiza los paquetes DHCP entrantes, determina el tipo de mensaje y decide la acción a tomar (ofrecer una IP, confirmar una solicitud, etc.). Aquí se construye el paquete de respuesta, también con Scapy.
-*   **`database.py`**: Es la memoria. Gestiona la base de datos SQLite donde se almacenan las concesiones de IP para asegurar que no se asigna la misma IP a dos clientes y para recordar las asignaciones existentes.
+*   **`database.py`**: Es la memoria. Gestiona la base de datos SQLite donde se almacenan las concesiones de IP y el histórico de eventos para asegurar que no se asigna la misma IP a dos clientes y para recordar las asignaciones existentes.
 *   **`logger.py`**: Es el narrador. Proporciona el formato de salida según el modo elegido, haciendo que el proceso sea fácil de seguir y entender.
 
 ## ✅ Hoja de Ruta (To-Do)
@@ -159,6 +163,10 @@ Este es el estado actual de la implementación del protocolo y las futuras mejor
     -   [x] Procesamiento concurrente de clientes usando hilos.
     -   [x] Compatibilidad con Agentes de Retransmisión (DHCP Relay) mediante el campo `giaddr`.
     -   [x] Detección de otros servidores DHCP en la red (Servidores "Rogue").
+-   [x] **Mejoras en la Base de Datos**
+    -   [x] Añadir logging de eventos importantes (histórico) a la base de datos.
+    -   [x] Crear una tabla o mecanismo para registrar y gestionar IPs en conflicto detectadas vía `DHCPDECLINE`.
+
 
 ### Mejoras Futuras y Características Planeadas
 
@@ -172,9 +180,6 @@ Este es el estado actual de la implementación del protocolo y las futuras mejor
     -   [ ] **Opción 60 (Vendor Class Identifier):** Implementar lógica para ofrecer opciones personalizadas según el tipo de dispositivo (ej. teléfonos IP, impresoras).
     -   [ ] **Opción 66/67 (TFTP Server/Bootfile):** Añadir soporte para entornos de arranque en red (PXE).
     -   [ ] **Opción 42 (NTP Servers):** Permitir la configuración de servidores de tiempo.
--   [ ] **Mejoras en la Base de Datos**
-    -   [ ] Crear una tabla o mecanismo para registrar y gestionar IPs en conflicto detectadas vía `DHCPDECLINE`.
-    -   [ ] Añadir logging de eventos importantes a la base de datos.
 -   [ ] **Mejoras Generales**
     -   [ ] Añadir pruebas unitarias para validar la lógica del `dhcp_handler`.
     -   [ ] Crear un archivo de log para registrar eventos de forma persistente, además de la salida en consola.
