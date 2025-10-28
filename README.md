@@ -167,7 +167,6 @@ Este es el estado actual de la implementación del protocolo y las futuras mejor
     -   [x] Añadir logging de eventos importantes (histórico) a la base de datos.
     -   [x] Crear una tabla o mecanismo para registrar y gestionar IPs en conflicto detectadas vía `DHCPDECLINE`.
 
-
 ### Mejoras Futuras y Características Planeadas
 
 -   [ ] **Soporte para más Mensajes DHCP**
@@ -183,9 +182,12 @@ Este es el estado actual de la implementación del protocolo y las futuras mejor
 -   [ ] **Mejoras Generales**
     -   [ ] Añadir pruebas unitarias para validar la lógica del `dhcp_handler`.
     -   [ ] Crear un archivo de log para registrar eventos de forma persistente, además de la salida en consola.
+-   [ ] **Gestión Avanzada del Pool**
+    -   [ ] **Exclusiones de Rango:** Permitir definir rangos de IP dentro de un pool que no serán asignados.
+-   [ ] **Integración con Otros Servicios**
+    -   [ ] **Actualizaciones Dinámicas de DNS (DDNS):** Integración con un servidor DNS para actualizar registros A y PTR.
 
 ---
-
 
 
 ## 📄 Licencia
