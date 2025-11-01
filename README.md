@@ -29,12 +29,12 @@ Esta es la magia del proyecto. Observa cómo se narra la misma conversación DHC
 Servidor listo. Escuchando peticiones DHCP...
 ----------------------------------------------------------------------
 [Conversación #1] ⚙️ Sistema (Contexto):     Iniciando seguimiento de una nueva transacción DHCP para el cliente 0a:1b:2c:3d:4e:5f.
-[Conversación #1] 🎓 Cliente (Análisis):     El cliente emite un broadcast DHCPDISCOVER (destino L2: ff:ff:ff:ff:ff:ff) buscando servidores.
-[Conversación #1]   👨‍🏫 Servidor (Acción):    Construimos un DHCPOFFER para 0a:1b:2c:3d:4e:5f, proponiendo la IP 192.168.1.100 y las opciones de red (máscara, gateway...).
+[Conversación #1] 🎓 Cliente (Análisis):     El cliente inicia el proceso DORA emitiendo un DHCPDISCOVER (broadcast) para localizar servidores.
+[Conversación #1]   👨‍🏫 Servidor (Acción):    El servidor responde con un DHCPOFFER, proponiendo la IP 192.168.1.100 y los parámetros de red.
 ----------------------------------------------------------------------
-[Conversación #1] 🎓 Cliente (Análisis):     El cliente emite un DHCPREQUEST (broadcast) seleccionando la oferta del servidor 192.168.1.1 para la IP 192.168.1.100.
+[Conversación #1] 🎓 Cliente (Análisis):     El cliente selecciona la oferta emitiendo un DHCPREQUEST para la IP 192.168.1.100.
 [Conversación #1] ⚙️ Sistema (Auditoría):    Se registra el evento 'ASSIGN' en el histórico para MAC 0a:1b:2c:3d:4e:5f e IP 192.168.1.100.
-[Conversación #1]   👨‍🏫 Servidor (Acción):    Enviamos un DHCPACK. La IP 192.168.1.100 queda oficialmente asignada a 0a:1b:2c:3d:4e:5f. Transacción completada.
+[Conversación #1]   👨‍🏫 Servidor (Acción):    El servidor confirma la asignación con un DHCPACK. La IP 192.168.1.100 queda oficialmente concedida a 0a:1b:2c:3d:4e:5f.
 [Conversación #1] ⚙️ Sistema (Registro):     Se escribe la concesión en la base de datos: MAC=0a:1b:2c:3d:4e:5f, IP=192.168.1.100.
 ----------------------------------------------------------------------
 ```
@@ -45,12 +45,12 @@ Servidor listo. Escuchando peticiones DHCP...
 Servidor listo. Escuchando peticiones DHCP...
 ----------------------------------------------------------------------
 [Conversación #1] ⚙️ Sistema (Log):          Nuevo ticket para el cliente 0a:1b:2c:3d:4e:5f.
-[Conversación #1] 👷‍♂️ Cliente:               Broadcast a la red. Soy Mi-PC (0a:1b:2c:3d:4e:5f), necesito una IP. ¿Alguien por ahí?
-[Conversación #1]   🔧 Servidor:             Te copio, 0a:1b:2c:3d:4e:5f. Te ofrezco la 192.168.1.100. Mándame un REQUEST si la quieres.
+[Conversación #1] 👷‍♂️ Cliente:               Ey, ¿alguien por ahí que me dé una IP? Soy Mi-PC (0a:1b:2c:3d:4e:5f).
+[Conversación #1]   🔧 Servidor:             Aquí estoy 👋. Tengo la 192.168.1.100 libre, ¿te mola?
 ----------------------------------------------------------------------
-[Conversación #1] 👷‍♂️ Cliente:               ¡Buena, server 192.168.1.1! Me quedo con tu oferta. Dame la 192.168.1.100, porfa.
+[Conversación #1] 👷‍♂️ Cliente:               Perfecto, me quedo con esa.
 [Conversación #1] ⚙️ Sistema (Auditoría):    Evento 'ASSIGN' de 0a:1b:2c:3d:4e:5f con 192.168.1.100 guardado en el histórico.
-[Conversación #1]   🔧 Servidor:             Hecho. La 192.168.1.100 es tuya. A currar.
+[Conversación #1]   🔧 Servidor:             Hecho, la 192.168.1.100 es tuya. ¡A disfrutarla! 😁
 [Conversación #1] ⚙️ Sistema (Log):          DB actualizada. 0a:1b:2c:3d:4e:5f -> 192.168.1.100. Fichado.
 ----------------------------------------------------------------------
 ```
@@ -61,12 +61,12 @@ Servidor listo. Escuchando peticiones DHCP...
 Servidor listo. Escuchando peticiones DHCP...
 ----------------------------------------------------------------------
 [Conversación #1] ⚙️ Sistema:        Asignando nuevo ID de conversación al cliente 0a:1b:2c:3d:4e:5f.
-[Conversación #1] 💻 Cliente:        ¡Hola a todos! Soy Mi-PC (0a:1b:2c:3d:4e:5f). ¿Alguien tiene una dirección IP?
-[Conversación #1]   🌐 Servidor:      ¡Hola, 0a:1b:2c:3d:4e:5f! Te ofrezco la dirección 192.168.1.100. Si te interesa, solicítala formalmente.
+[Conversación #1] 💻 Cliente:        ¡Hola red 👋! Soy Mi-PC (0a:1b:2c:3d:4e:5f), ¿alguien me da una IP?
+[Conversación #1]   🌐 Servidor:      ¡Hola! Tengo la 192.168.1.100 libre, ¿te interesa?
 ----------------------------------------------------------------------
-[Conversación #1] 💻 Cliente:        ¡Servidor 192.168.1.1, acepto tu oferta! Solicito formalmente la IP 192.168.1.100.
+[Conversación #1] 💻 Cliente:        ¡Perfecto! Quiero la 192.168.1.100 que me ofreciste.
 [Conversación #1] ⚙️ Sistema:        Guardando en el histórico: El cliente 0a:1b:2c:3d:4e:5f ha realizado un ASSIGN para la IP 192.168.1.100.
-[Conversación #1]   🌐 Servidor:      ¡Confirmado, 0a:1b:2c:3d:4e:5f! La dirección IP 192.168.1.100 es tuya. ¡Bienvenido a la red!
+[Conversación #1]   🌐 Servidor:      Confirmado ✅, la IP 192.168.1.100 es tuya. ¡Bienvenido a la red!
 [Conversación #1] ⚙️ Sistema:        Registro actualizado: 0a:1b:2c:3d:4e:5f tiene la IP 192.168.1.100 hasta Tue Oct 28 02:07:00 2025.
 ----------------------------------------------------------------------
 ```
