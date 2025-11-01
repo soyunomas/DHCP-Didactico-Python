@@ -31,9 +31,9 @@ class DhcpLogger:
         if self.mode == 'profesional': return
         client_id = f"{hostname} ({mac})" if hostname else mac
         messages = {
-            'chat': ('💻 Cliente', f"¡Hola a todos! Soy {client_id}. ¿Alguien tiene una dirección IP?"),
-            'docente': ('🎓 Cliente (Análisis)', f"El cliente emite un broadcast DHCPDISCOVER (destino L2: ff:ff:ff:ff:ff:ff) buscando servidores."),
-            'colegas': ('👷‍♂️ Cliente', f"Broadcast a la red. Soy {client_id}, necesito una IP. ¿Alguien por ahí?")
+            'chat': ('💻 Cliente', f"¡Hola red 👋! Soy {client_id}, ¿alguien me da una IP?"),
+            'docente': ('🎓 Cliente (Análisis)', f"El cliente inicia el proceso DORA emitiendo un DHCPDISCOVER (broadcast) para localizar servidores."),
+            'colegas': ('👷‍♂️ Cliente', f"Ey, ¿alguien por ahí que me dé una IP? Soy {client_id}.")
         }
         speaker, msg = messages[self.mode]
         self._log(speaker, msg, convo_id)
@@ -41,9 +41,9 @@ class DhcpLogger:
     def log_offer(self, mac, ip, convo_id=None):
         if self.mode == 'profesional': return
         messages = {
-            'chat': ('🌐 Servidor', f"¡Hola, {mac}! Te ofrezco la dirección {ip}. Si te interesa, solicítala formalmente."),
-            'docente': ('👨‍🏫 Servidor (Acción)', f"Construimos un DHCPOFFER para {mac}, proponiendo la IP {ip} y las opciones de red (máscara, gateway...)."),
-            'colegas': ('🔧 Servidor', f"Te copio, {mac}. Te ofrezco la {ip}. Mándame un REQUEST si la quieres.")
+            'chat': ('🌐 Servidor', f"¡Hola, {mac}! Tengo la {ip} libre, ¿te interesa?"),
+            'docente': ('👨‍🏫 Servidor (Acción)', f"El servidor responde con un DHCPOFFER, proponiendo la IP {ip} y los parámetros de red."),
+            'colegas': ('🔧 Servidor', f"Aquí estoy 👋. Tengo la {ip} libre, ¿te mola?")
         }
         speaker, msg = messages[self.mode]
         self._log(speaker, msg, convo_id)
@@ -52,20 +52,29 @@ class DhcpLogger:
     def log_request(self, mac, ip, server_id, leads_to_nak, is_for_other_server, hostname=None, convo_id=None):
         if self.mode == 'profesional': return
         server_display = server_id if server_id else self.server_ip
-        client_id = f"{hostname} ({mac})" if hostname else mac
         
-        chat_msg = f"¡Servidor {server_display}, acepto tu oferta! Solicito formalmente la IP {ip}."
-        colegas_msg = f"¡Buena, server {server_display}! Me quedo con tu oferta. Dame la {ip}, porfa."
+        # Modo Chat
+        chat_msg = f"¡Perfecto! Quiero la {ip} que me ofreciste."
         if is_for_other_server: 
-            chat_msg = f"(Al servidor {server_display}) Gracias por la oferta, ¡la acepto! Solicito la IP {ip}."
-            colegas_msg = f"(Al otro server {server_display}) ¡Eh, tú! Me quedo con tu IP ({ip})."
+            chat_msg = f"(Al servidor {server_display}) ¡Gracias por la oferta, la acepto! Solicito la IP {ip}."
         elif leads_to_nak: 
-            chat_msg = f"Vengo de otra red y ya tenía la IP {ip}. ¿Puedo seguir usándola aquí?"
-            colegas_msg = f"Oye, server. Vengo con la IP {ip} de antes. ¿Me vale aquí o qué?"
+            chat_msg = f"Oye servidor, antes tenía la {ip}, ¿puedo seguir con esa?"
         
+        # Modo Docente
+        docente_msg = f"El cliente selecciona la oferta emitiendo un DHCPREQUEST para la IP {ip}."
+        if leads_to_nak:
+            docente_msg = f"El cliente intenta reutilizar una concesión anterior para la IP {ip} emitiendo un DHCPREQUEST."
+
+        # Modo Colegas
+        colegas_msg = "Perfecto, me quedo con esa."
+        if is_for_other_server:
+            colegas_msg = f"(Al otro server {server_display}) ¡Eh, tú! Me quedo con tu IP ({ip})."
+        elif leads_to_nak:
+            colegas_msg = f"Oye, antes tenía la {ip}, ¿sigue libre?"
+
         messages = {
             'chat': ('💻 Cliente', chat_msg),
-            'docente': ('🎓 Cliente (Análisis)', f"El cliente emite un DHCPREQUEST (broadcast) seleccionando la oferta del servidor {server_display} para la IP {ip}."),
+            'docente': ('🎓 Cliente (Análisis)', docente_msg),
             'colegas': ('👷‍♂️ Cliente', colegas_msg)
         }
         speaker, msg = messages[self.mode]
@@ -74,22 +83,25 @@ class DhcpLogger:
     def log_renewal_request(self, mac, ip, convo_id=None):
         if self.mode == 'profesional': return
         messages = {
-            'chat': ('💻 Cliente', f"Hola de nuevo. Mi concesión para {ip} va a caducar. ¿Puedo renovarla?"),
-            'docente': ('🎓 Cliente (Análisis)', f"El cliente (en estado RENEWING) envía un DHCPREQUEST unicast al servidor para extender la concesión de {ip}."),
-            'colegas': ('👷‍♂️ Cliente', f"Oye, colega. Se me va a caducar la {ip}. ¿Me la renuevas?")
+            'chat': ('💻 Cliente', f"Oye servidor, sigo aquí, ¿renovamos la {ip}?"),
+            'docente': ('🎓 Cliente (Análisis)', f"El cliente inicia la renovación (T1) enviando un DHCPREQUEST (unicast) para extender su lease de {ip}."),
+            'colegas': ('👷‍♂️ Cliente', f"Oye, sigo aquí. ¿Renovamos mi IP?")
         }
         speaker, msg = messages[self.mode]
         self._log(speaker, msg, convo_id)
 
     def log_ack(self, mac, ip, convo_id=None, is_renewal=False):
         if self.mode == 'profesional': return
-        chat_msg = f"¡Confirmado, {mac}! La dirección IP {ip} es tuya. ¡Bienvenido a la red!"
-        docente_msg = f"Enviamos un DHCPACK. La IP {ip} queda oficialmente asignada a {mac}. Transacción completada."
-        colegas_msg = f"Hecho. La {ip} es tuya. A currar."
+        
         if is_renewal:
-            chat_msg = f"¡Por supuesto, {mac}! Tu concesión para {ip} ha sido renovada."
-            docente_msg = f"Renovación aprobada. Enviamos un DHCPACK para confirmar la extensión del tiempo de concesión."
-            colegas_msg = f"Claro, tío. Renovada. Tira millas."
+            chat_msg = f"¡Por supuesto! Tu concesión para {ip} ha sido renovada."
+            docente_msg = f"Renovación aprobada. El servidor envía un DHCPACK para extender el tiempo de concesión de {ip}."
+            colegas_msg = f"Claro bro, te la extiendo 💪."
+        else:
+            chat_msg = f"Confirmado ✅, la IP {ip} es tuya. ¡Bienvenido a la red!"
+            docente_msg = f"El servidor confirma la asignación con un DHCPACK. La IP {ip} queda oficialmente concedida a {mac}."
+            colegas_msg = f"Hecho, la {ip} es tuya. ¡A disfrutarla! 😁"
+
         messages = { 'chat': ('🌐 Servidor', chat_msg), 'docente': ('👨‍🏫 Servidor (Acción)', docente_msg), 'colegas': ('🔧 Servidor', colegas_msg) }
         speaker, msg = messages[self.mode]
         self._log(speaker, msg, convo_id)
@@ -97,9 +109,9 @@ class DhcpLogger:
     def log_nak(self, mac, ip, convo_id=None):
         if self.mode == 'profesional': return
         messages = {
-            'chat': ('🌐 Servidor', f"¡Lo siento, {mac}! La IP {ip} que pides no es válida. Debes iniciar el proceso de nuevo."),
-            'docente': ('👨‍🏫 Servidor (Acción)', f"La IP solicitada ({ip}) es inválida. Enviamos un DHCPNAK para forzar al cliente a reiniciar el proceso."),
-            'colegas': ('🔧 Servidor', f"Ni de coña, {mac}. Esa IP ({ip}) no te la puedo dar. Empieza de cero.")
+            'chat': ('🌐 Servidor', f"Negativo ❌, no puedes usar la IP {ip} en esta red. Debes empezar de cero."),
+            'docente': ('👨‍🏫 Servidor (Acción)', f"El servidor rechaza la solicitud con un DHCPNAK, forzando al cliente a reiniciar el proceso desde DISCOVER."),
+            'colegas': ('🔧 Servidor', f"Ni de coña, esa IP ({ip}) no te vale aquí. Pide una nueva.")
         }
         speaker, msg = messages[self.mode]
         self._log(speaker, msg, convo_id)
@@ -108,9 +120,9 @@ class DhcpLogger:
     def log_decline(self, mac, ip, convo_id=None):
         if self.mode == 'profesional': return
         messages = {
-            'chat': ('💻 Cliente', f"¡Servidor, hay un problema! La IP {ip} que me diste ya la está usando alguien. La rechazo."),
-            'docente': ('🎓 Cliente (Análisis)', f"El cliente detecta un conflicto (ARP) con la IP {ip} y envía un DHCPDECLINE para notificar al servidor."),
-            'colegas': ('👷‍♂️ Cliente', f"¡Jefe! La IP {ip} que me diste ya está pillada. Hay un duplicado. La suelto.")
+            'chat': ('💻 Cliente', f"¡Servidor, hay un problema! La IP {ip} que me diste ya la está usando otro 😤. La rechazo."),
+            'docente': ('🎓 Cliente (Análisis)', f"El cliente detecta un conflicto de IP (vía ARP) con {ip} y notifica al servidor con un DHCPDECLINE."),
+            'colegas': ('👷‍♂️ Cliente', f"¡Jefe! La IP {ip} que me diste ya está pillada 😠. Te la devuelvo.")
         }
         speaker, msg = messages[self.mode]
         self._log(speaker, msg, convo_id)
@@ -127,7 +139,6 @@ class DhcpLogger:
         self._log(speaker, msg, convo_id)
         self._separator()
     
-    # <<< MEJORA: Nuevo método para loggear la escritura en el histórico >>>
     def log_db_history_update(self, mac, ip, event_type, convo_id=None):
         if self.mode == 'profesional': return
         event_type_upper = event_type.upper()
@@ -138,7 +149,6 @@ class DhcpLogger:
         }
         speaker, msg = messages[self.mode]
         self._log(speaker, msg, convo_id)
-    # --- Fin de la mejora ---
 
     def log_request_ignored(self, convo_id=None):
         if self.mode == 'profesional': return
@@ -176,9 +186,9 @@ class DhcpLogger:
     def log_release(self, mac, convo_id=None):
         if self.mode == 'profesional': return
         messages = {
-            'chat': ('💻 Cliente', f"Ya no necesito la dirección IP. ¡Gracias por todo!"),
-            'docente': ('🎓 Cliente (Análisis)', f"El cliente envía un DHCPRELEASE para liberar su concesión de IP de forma voluntaria."),
-            'colegas': ('👷‍♂️ Cliente', f"Me piro. Te devuelvo la IP. ¡Gracias por el curro!")
+            'chat': ('💻 Cliente', f"Gracias por todo, dejo libre la IP que me asignaste."),
+            'docente': ('🎓 Cliente (Análisis)', f"El cliente libera voluntariamente su concesión de IP enviando un DHCPRELEASE."),
+            'colegas': ('👷‍♂️ Cliente', f"Me voy, te devuelvo la IP. ¡Gracias por todo! 👋")
         }
         speaker, msg = messages[self.mode]
         self._log(speaker, msg, convo_id)

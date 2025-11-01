@@ -1,10 +1,17 @@
 # src/server.py
 import json
 import argparse
-import threading # <-- Importante que esté aquí
-from scapy.all import sniff, sendp, conf, Ether
+import threading
+from scapy.all import sniff, sendp, conf, Ether, BOOTP, DHCP
 from src.database import LeaseDatabase
 from src.dhcp_handler import DHCPHandler
+
+# Mapa para traducir el tipo de mensaje DHCP a un string legible
+MSG_TYPE_MAP = {
+    2: 'DHCPOFFER',
+    5: 'DHCPACK',
+    6: 'DHCPNAK'
+}
 
 def load_config(path='config/config.json'):
     with open(path, 'r') as f:
@@ -28,10 +35,7 @@ def main():
     config = load_config()
     print(f"Servidor IP: {config['server_ip']}, Escuchando en: {config['interface']}")
 
-    # --- CAMBIO CLAVE Y DEFINITIVO AQUÍ ---
-    # Usamos un RLock en lugar de un Lock para prevenir deadlocks.
     lock = threading.RLock()
-    # --- FIN DEL CAMBIO ---
     
     db = LeaseDatabase(lock=lock)
     handler = DHCPHandler(config, db, log_mode, lock=lock)
@@ -42,7 +46,15 @@ def main():
             if response:
                 sendp(response, iface=config['interface'], verbose=0)
                 if log_mode == 'profesional':
-                    print(f"[SEND] Enviada respuesta a {response[Ether].dst}")
+                    # --- MEJORA EN EL LOGGING PROFESIONAL ---
+                    client_mac = response[Ether].dst
+                    yiaddr = response[BOOTP].yiaddr
+                    # El primer elemento de las opciones es siempre el message-type
+                    msg_type_code = response[DHCP].options[0][1]
+                    msg_type_str = MSG_TYPE_MAP.get(msg_type_code, f'UNKNOWN({msg_type_code})')
+                    
+                    print(f"[{msg_type_str}] Sent IP {yiaddr} to MAC {client_mac}")
+                    # --- FIN DE LA MEJORA ---
         except Exception as e:
             print(f"\n--- [ERROR CRÍTICO EN UN HILO] ---")
             print(f"El procesamiento del paquete falló con una excepción no controlada.")

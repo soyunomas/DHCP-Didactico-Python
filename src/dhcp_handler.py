@@ -36,9 +36,8 @@ class DHCPHandler:
         except Exception as e:
             print(f"[ERROR CRÍTICO] No se pudo obtener la MAC de la interfaz '{config['interface']}'. Error: {e}")
             exit(1)
-
-        if log_mode != 'profesional':
-            print(f"--- Logger inicializado en modo: {log_mode} ---")
+        
+        # --- LÍNEA REDUNDANTE ELIMINADA DE AQUÍ ---
 
     def _get_convo_id(self, mac):
         with self.lock:
@@ -86,12 +85,10 @@ class DHCPHandler:
         elif msg_type == DHCPMessageType.REQUEST:
             return self._handle_request(pkt, convo_id)
         elif msg_type == DHCPMessageType.RELEASE:
-            # <<< MEJORA: Obtenemos la IP antes de borrarla para el histórico
             lease = self.db.get_lease(src_mac)
             if lease:
                 self.db.add_history_log(src_mac, lease['ip'], 'RELEASE')
                 self.logger.log_db_history_update(src_mac, lease['ip'], 'RELEASE', convo_id)
-            # --- Fin de la mejora ---
             self.db.release_lease(src_mac)
             self.logger.log_release(src_mac, convo_id)
             self._clear_convo_id(src_mac)
@@ -100,11 +97,9 @@ class DHCPHandler:
             requested_ip_opt = next((opt for opt in pkt[DHCP].options if opt[0] == 'requested_addr'), None)
             declined_ip = requested_ip_opt[1] if requested_ip_opt else "N/A"
             self.db.release_lease(src_mac) 
-            # <<< MEJORA: Registramos el evento DECLINE en el histórico
             if declined_ip != "N/A":
                 self.db.add_history_log(src_mac, declined_ip, 'DECLINE')
                 self.logger.log_db_history_update(src_mac, declined_ip, 'DECLINE', convo_id)
-            # --- Fin de la mejora ---
             self.logger.log_decline(src_mac, declined_ip, convo_id)
             self._clear_convo_id(src_mac)
             return None
@@ -176,10 +171,8 @@ class DHCPHandler:
             lease = self.db.get_lease(client_mac)
             if lease and lease['ip'] == client_ip_from_ciaddr:
                 self.db.add_lease(client_mac, client_ip_from_ciaddr, self.config['lease_time_seconds'])
-                # <<< MEJORA: Registramos la renovación en el histórico
                 self.db.add_history_log(client_mac, client_ip_from_ciaddr, 'RENEW')
                 self.logger.log_db_history_update(client_mac, client_ip_from_ciaddr, 'RENEW', convo_id)
-                # --- Fin de la mejora ---
                 self.logger.log_ack(client_mac, client_ip_from_ciaddr, convo_id, is_renewal=True)
                 
                 response_pkt = self._craft_response_packet(pkt, client_ip_from_ciaddr)
@@ -214,10 +207,8 @@ class DHCPHandler:
                 return self._handle_nak(pkt)
 
             self.db.add_lease(client_mac, requested_ip, self.config['lease_time_seconds'])
-            # <<< MEJORA: Registramos la asignación en el histórico
             self.db.add_history_log(client_mac, requested_ip, 'ASSIGN')
             self.logger.log_db_history_update(client_mac, requested_ip, 'ASSIGN', convo_id)
-            # --- Fin de la mejora ---
             self.logger.log_ack(client_mac, requested_ip, convo_id, is_renewal=False)
             
             lease_info = self.db.get_lease(client_mac)
