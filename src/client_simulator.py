@@ -1,0 +1,348 @@
+# src/client_simulator.py
+import argparse
+import random
+import sys
+import time
+from scapy.all import (
+    BOOTP,
+    DHCP,
+    IP,
+    UDP,
+    Ether,
+    conf,
+    sniff,
+)
+from scapy.arch import L2Socket, get_if_hwaddr
+
+# Intentamos importar 'rich', si no está, damos instrucciones claras.
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+except ImportError:
+    print("Error: La librería 'rich' no está instalada.")
+    print("Por favor, instálala para usar este simulador: pip install rich")
+    sys.exit(1)
+
+# --- Constantes y Configuración ---
+CLIENT_PORT = 68
+SERVER_PORT = 67
+HOSTNAME = "Mi-PC-Simulada"
+
+# Generamos una MAC ficticia localmente administrada (el primer octeto es 0x02)
+# para evitar conflictos con hardware real.
+FAKE_MAC = f"02:00:00:{random.randint(0, 255):02x}:{random.randint(0, 255):02x}:{random.randint(0, 255):02x}"
+
+
+class DHCPClientSimulator:
+    """
+    Un cliente DHCP simulado para interactuar con el servidor didáctico.
+    Maneja su propio estado (IP, lease, etc.) y construye/envía paquetes.
+    """
+
+    def __init__(self, interface: str):
+        self.interface = interface
+        self.console = Console()
+        self.mac = FAKE_MAC
+        self.xid = 0  # Transaction ID
+        self.reset_state()
+        conf.checkIPaddr = False
+
+    def reset_state(self):
+        """Resetea el estado del cliente a sus valores iniciales."""
+        self.current_ip = None
+        self.server_ip = None
+        self.subnet_mask = None
+        self.router = None
+        self.dns_servers = []
+        self.lease_time = 0
+        self.lease_start_time = 0
+        self.xid = random.randint(0, 0xFFFFFFFF)
+
+    def _print_packet(self, title: str, packet, color: str = "cyan"):
+        """Imprime un resumen del paquete de forma legible."""
+        self.console.print(f"[{color} bold]TRANSMITIENDO -> {title}[/{color} bold]")
+        self.console.print(packet.summary())
+        if packet.haslayer(DHCP):
+            self.console.print(f"  └─ DHCP Options: {packet[DHCP].options}")
+
+    def _send_and_receive(self, packet_to_send, timeout: int = 5):
+        """Envía un paquete y espera una respuesta específica."""
+        sock = L2Socket(iface=self.interface)
+        sock.send(packet_to_send)
+
+        # <<< CORRECCIÓN: El filtro ahora acepta paquetes a nuestra MAC o broadcast.
+        # Esto es crucial para recibir el DHCPOFFER inicial.
+        filter_str = f"udp and port {CLIENT_PORT} and (ether dst {self.mac} or ether broadcast)"
+        self.console.print(f"[dim]Esperando respuesta (filtro: '{filter_str}')...[/dim]")
+        
+        try:
+            response = sniff(
+                iface=self.interface,
+                filter=filter_str,
+                timeout=timeout,
+                count=1
+            )
+            if response:
+                return response[0]
+        except Exception as e:
+            self.console.print(f"[bold red]Error al escuchar respuestas: {e}[/bold red]")
+        finally:
+            sock.close()
+        
+        return None
+
+    def run_discover(self):
+        """Envía un DHCPDISCOVER y procesa el DHCPOFFER."""
+        self.console.rule("[bold yellow]1. Iniciando Fase DISCOVER[/bold yellow]")
+        self.reset_state() # Empezamos de cero
+
+        # Construcción del paquete
+        discover_pkt = (
+            Ether(src=self.mac, dst="ff:ff:ff:ff:ff:ff") /
+            IP(src="0.0.0.0", dst="255.255.255.255") /
+            UDP(sport=CLIENT_PORT, dport=SERVER_PORT) /
+            BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), flags=0x8000) / # flags=0x8000 activa la bandera de Broadcast
+            DHCP(options=[("message-type", "discover"), ("hostname", HOSTNAME.encode()), "end"])
+        )
+        # Sincronizamos el xid para el resto de la transacción
+        self.xid = discover_pkt[BOOTP].xid
+
+        self._print_packet("DHCP DISCOVER", discover_pkt)
+        offer_pkt = self._send_and_receive(discover_pkt)
+
+        if not offer_pkt or not offer_pkt.haslayer(DHCP) or ("message-type", 2) not in offer_pkt[DHCP].options:
+            self.console.print("[bold red]❌ No se recibió una oferta (DHCPOFFER) válida.[/bold red]")
+            return False
+
+        self._print_packet("DHCPOFFER Recibido", offer_pkt, "green")
+
+        # Guardamos la información de la oferta
+        self.current_ip = offer_pkt[BOOTP].yiaddr
+        for opt in offer_pkt[DHCP].options:
+            if opt[0] == "server_id": self.server_ip = opt[1]
+            if opt[0] == "subnet_mask": self.subnet_mask = opt[1]
+            if opt[0] == "router": self.router = opt[1]
+            if opt[0] == "name_server": self.dns_servers = opt[1:]
+            if opt[0] == "lease_time": self.lease_time = opt[1]
+        
+        self.console.print(f"[bold green]✅ Oferta recibida: IP {self.current_ip} del servidor {self.server_ip}[/bold green]")
+        return True
+
+    def run_request(self):
+        """Envía un DHCPREQUEST para aceptar una oferta y procesa el DHCPACK."""
+        if not self.current_ip or not self.server_ip:
+            self.console.print("[bold red]❌ No se puede hacer un REQUEST sin una oferta previa. Ejecuta DISCOVER primero.[/bold red]")
+            return False
+            
+        self.console.rule("[bold yellow]2. Iniciando Fase REQUEST[/bold yellow]")
+        
+        request_pkt = (
+            Ether(src=self.mac, dst="ff:ff:ff:ff:ff:ff") /
+            IP(src="0.0.0.0", dst="255.255.255.255") /
+            UDP(sport=CLIENT_PORT, dport=SERVER_PORT) /
+            BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), xid=self.xid, flags=0x8000) /
+            DHCP(options=[
+                ("message-type", "request"),
+                ("requested_addr", self.current_ip),
+                ("server_id", self.server_ip),
+                ("hostname", HOSTNAME.encode()),
+                "end"
+            ])
+        )
+        
+        self._print_packet("DHCP REQUEST", request_pkt)
+        ack_pkt = self._send_and_receive(request_pkt)
+        
+        if not ack_pkt or not ack_pkt.haslayer(DHCP):
+            self.console.print("[bold red]❌ No se recibió respuesta al REQUEST.[/bold red]")
+            return False
+        
+        msg_type = next((opt[1] for opt in ack_pkt[DHCP].options if opt[0] == 'message-type'), None)
+        
+        if msg_type == 5: # DHCPACK
+            self._print_packet("DHCPACK Recibido", ack_pkt, "green")
+            self.lease_start_time = time.time()
+            self.console.print(f"[bold green]🎉 ¡CONCESIÓN CONFIRMADA! IP: {self.current_ip}[/bold green]")
+            return True
+        elif msg_type == 6: # DHCPNAK
+            self._print_packet("DHCPNAK Recibido", ack_pkt, "red")
+            self.console.print("[bold red]❌ El servidor rechazó la solicitud (DHCPNAK).[/bold red]")
+            self.reset_state()
+            return False
+        
+        return False
+
+    def run_renew(self):
+        """Envía un DHCPREQUEST (unicast) para renovar la concesión actual."""
+        if not self.current_ip or not self.server_ip:
+            self.console.print("[bold red]❌ No hay una concesión activa para renovar.[/bold red]")
+            return False
+
+        self.console.rule("[bold yellow]Iniciando Renovación de Concesión[/bold yellow]")
+
+        # La renovación es un UNICAST al servidor. Necesitamos la MAC del servidor/gateway.
+        # En una red simple, asumimos que el servidor está en el mismo segmento L2.
+        server_hw_addr = get_if_hwaddr(self.interface)
+        
+        renew_pkt = (
+            Ether(src=self.mac, dst=server_hw_addr) /
+            IP(src=self.current_ip, dst=self.server_ip) /
+            UDP(sport=CLIENT_PORT, dport=SERVER_PORT) /
+            BOOTP(ciaddr=self.current_ip, chaddr=bytes.fromhex(self.mac.replace(':', '')), xid=self.xid) /
+            DHCP(options=[("message-type", "request"), "end"])
+        )
+        
+        self._print_packet("DHCP RENEWAL REQUEST", renew_pkt)
+        ack_pkt = self._send_and_receive(renew_pkt)
+        
+        # El resto del flujo es idéntico a la respuesta del REQUEST
+        if ack_pkt and ack_pkt.haslayer(DHCP) and ("message-type", 5) in ack_pkt[DHCP].options:
+            self._print_packet("DHCPACK de Renovación Recibido", ack_pkt, "green")
+            self.lease_start_time = time.time()
+            self.console.print(f"[bold green]✅ Concesión para {self.current_ip} renovada con éxito.[/bold green]")
+            return True
+        else:
+            self.console.print("[bold red]❌ Falló la renovación de la concesión.[/bold red]")
+            # En un cliente real, el estado no se resetea hasta que expira el lease
+            return False
+
+    def run_release(self):
+        """Envía un DHCPRELEASE para liberar la IP actual."""
+        if not self.current_ip or not self.server_ip:
+            self.console.print("[bold red]❌ No hay una concesión activa para liberar.[/bold red]")
+            return
+
+        self.console.rule("[bold yellow]Iniciando Liberación de Concesión[/bold yellow]")
+        
+        server_hw_addr = get_if_hwaddr(self.interface)
+
+        release_pkt = (
+            Ether(src=self.mac, dst=server_hw_addr) /
+            IP(src=self.current_ip, dst=self.server_ip) /
+            UDP(sport=CLIENT_PORT, dport=SERVER_PORT) /
+            BOOTP(ciaddr=self.current_ip, chaddr=bytes.fromhex(self.mac.replace(':', '')), xid=self.xid) /
+            DHCP(options=[("message-type", "release"), ("server_id", self.server_ip), "end"])
+        )
+
+        self._print_packet("DHCP RELEASE", release_pkt)
+        # El RFC no exige una respuesta para DHCPRELEASE
+        sock = L2Socket(iface=self.interface)
+        sock.send(release_pkt)
+        sock.close()
+        
+        self.console.print(f"[bold green]✅ IP {self.current_ip} liberada. El estado del cliente ha sido reseteado.[/bold green]")
+        self.reset_state()
+
+    def run_decline(self):
+        """Envía un DHCPDECLINE si la IP ofrecida ya está en uso."""
+        if not self.current_ip or not self.server_ip:
+            self.console.print("[bold red]❌ No hay una concesión que rechazar. Primero obtén una con la opción [1] o [5].[/bold red]")
+            return
+            
+        self.console.rule("[bold red]Iniciando Rechazo de Concesión (DECLINE)[/bold red]")
+
+        decline_pkt = (
+            Ether(src=self.mac, dst="ff:ff:ff:ff:ff:ff") /
+            IP(src="0.0.0.0", dst="255.255.255.255") /
+            UDP(sport=CLIENT_PORT, dport=SERVER_PORT) /
+            BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), xid=self.xid) /
+            DHCP(options=[
+                ("message-type", "decline"),
+                ("requested_addr", self.current_ip),
+                ("server_id", self.server_ip),
+                "end"
+            ])
+        )
+
+        self._print_packet("DHCP DECLINE", decline_pkt, "magenta")
+        # El RFC no exige una respuesta para DHCPDECLINE
+        sock = L2Socket(iface=self.interface)
+        sock.send(decline_pkt)
+        sock.close()
+
+        self.console.print(f"[bold green]✅ Conflicto por la IP {self.current_ip} notificado al servidor. Estado reseteado.[/bold green]")
+        self.reset_state()
+        
+    def show_status(self):
+        """Muestra el estado actual del cliente simulado."""
+        table = Table(title="[bold]Estado Actual del Cliente DHCP Simulado[/bold]")
+        table.add_column("Parámetro", style="cyan")
+        table.add_column("Valor")
+
+        table.add_row("MAC Ficticia", self.mac)
+        table.add_row("Hostname", HOSTNAME)
+        table.add_row("Dirección IP", f"[bold green]{self.current_ip}[/bold green]" if self.current_ip else "[dim]Ninguna[/dim]")
+        table.add_row("Servidor DHCP", str(self.server_ip) if self.server_ip else "[dim]N/A[/dim]")
+        table.add_row("Máscara de Subred", str(self.subnet_mask) if self.subnet_mask else "[dim]N/A[/dim]")
+        table.add_row("Router (Gateway)", str(self.router) if self.router else "[dim]N/A[/dim]")
+        table.add_row("Servidores DNS", str(self.dns_servers) if self.dns_servers else "[dim]N/A[/dim]")
+
+        if self.lease_start_time > 0:
+            elapsed = time.time() - self.lease_start_time
+            remaining = self.lease_time - elapsed
+            if remaining > 0:
+                table.add_row("Tiempo de Concesión", f"{self.lease_time}s (quedan {int(remaining)}s)")
+            else:
+                table.add_row("Tiempo de Concesión", "[bold red]Expirada[/bold red]")
+        else:
+             table.add_row("Tiempo de Concesión", "[dim]N/A[/dim]")
+
+        self.console.print(table)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Cliente de simulación DHCP para probar el servidor didáctico.")
+    parser.add_argument(
+        "--interface",
+        required=True,
+        help="La interfaz de red en la que escuchar (ej: eth0, enp3s0)."
+    )
+    args = parser.parse_args()
+
+    client = DHCPClientSimulator(interface=args.interface)
+    console = Console()
+
+    while True:
+        client.show_status()
+        
+        menu_text = Text("\nElige una acción:", justify="center")
+        menu_text.append("\n  [1] Proceso Completo (DORA: Discover -> Offer -> Request -> Ack)")
+        menu_text.append("\n  [2] Renovar Concesión (DHCPREQUEST Unicast)")
+        menu_text.append("\n  [3] Liberar Concesión (DHCPRELEASE)")
+        menu_text.append("\n  [4] Rechazar Concesión por conflicto (DHCPDECLINE)")
+        menu_text.append("\n  [5] Solo Discover (Para ver la oferta del servidor)")
+        menu_text.append("\n  [q] Salir")
+
+        console.print(Panel(menu_text, title="[bold magenta]Menú de Simulación DHCP[/bold magenta]"))
+        choice = console.input("[bold]Opción: [/bold]")
+
+        if choice == '1':
+            if client.run_discover():
+                client.run_request()
+        elif choice == '2':
+            client.run_renew()
+        elif choice == '3':
+            client.run_release()
+        elif choice == '4':
+            client.run_decline()
+        elif choice == '5':
+            client.run_discover()
+        elif choice.lower() == 'q':
+            console.print("[bold yellow]¡Hasta luego![/bold yellow]")
+            break
+        else:
+            console.print("[bold red]Opción no válida. Inténtalo de nuevo.[/bold red]")
+        
+        console.input("\n[dim]Presiona Enter para continuar...[/dim]")
+        console.clear()
+
+
+if __name__ == "__main__":
+    # Importante: Este script debe ejecutarse con privilegios de superusuario
+    # para poder abrir sockets de bajo nivel (L2Socket).
+    if sys.version_info < (3, 7):
+        sys.exit("Este script requiere Python 3.7 o superior.")
+    
+    main()
