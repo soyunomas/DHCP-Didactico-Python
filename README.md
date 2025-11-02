@@ -18,6 +18,7 @@ Este proyecto nace de la necesidad de visualizar y desmitificar las comunicacion
 *   **Base de Datos Persistente:** Utiliza SQLite para guardar y gestionar el estado de las concesiones de IP de forma concurrente y segura.
 *   **Historial de Eventos:** Guarda un registro persistente de todas las asignaciones, renovaciones, liberaciones y conflictos en la base de datos para auditoría.
 *   **Soporte para DHCP Relay:** El servidor es compatible con el campo `giaddr`, permitiendo su funcionamiento en redes más complejas con múltiples VLANs (requiere un agente de retransmisión configurado en el router).
+*   **Cliente Interactivo para Pruebas:** Incluye un simulador de cliente (`client_simulator.py`) para probar fácilmente todas las funciones del servidor (DORA, Release, Decline, etc.) desde la línea de comandos.
 
 ## 🚀 Demostración de los Modos de Logging
 
@@ -115,11 +116,12 @@ DHCP-Didactico-Python/
     *   `interface`: El nombre de la interfaz de red donde el servidor escuchará peticiones (ej. `eth0`, `eno1`, `enp3s0`). Puedes encontrarla con `ip a` o `ifconfig`.
     *   `subnet`: Define el rango de IPs (`pool_start`, `pool_end`) que el servidor podrá asignar.
 
-4.  **Ejecuta el servidor:**
+4.  **Ejecuta el Servidor y el Cliente de Simulación:**
 
     > **Nota importante sobre `sudo` y Módulos de Python:**
-    > El servidor necesita privilegios de administrador (`sudo`). Además, como nuestro proyecto está estructurado con el código fuente dentro de un directorio `src/`, debemos decirle a Python que ejecute nuestro código como un **módulo** usando el flag `-m`. Esto asegura que los `imports` como `from src.database ...` funcionen correctamente desde la raíz del proyecto.
+    > Tanto el servidor como el cliente necesitan privilegios de administrador (`sudo`). Además, como el proyecto está estructurado con el código fuente dentro de `src/`, debemos decirle a Python que ejecute el código como un **módulo** usando el flag `-m`. Esto asegura que los `imports` internos funcionen correctamente.
 
+    **4a. Ejecuta el Servidor:**
       ```bash
         # Modo por defecto (profesional/silencioso)
         sudo venv/bin/python3 -m src.server
@@ -131,7 +133,19 @@ DHCP-Didactico-Python/
         # O
         sudo venv/bin/python3 -m src.server --modo-chat
      ```
-        
+
+    **4b. Ejecuta el Cliente de Simulación (en otra terminal):**
+
+    Para probar el servidor de forma interactiva, abre una **segunda terminal**, activa el entorno virtual y ejecuta el cliente especificando la misma interfaz:
+
+    ```bash
+    # En la nueva terminal, activa de nuevo el entorno virtual si es necesario
+    # source venv/bin/activate
+
+    sudo venv/bin/python3 -m src.client_simulator --interface eno1
+    ```
+    > Reemplaza `eno1` por el nombre de tu interfaz. El cliente te presentará un menú interactivo para enviar peticiones DHCP y ver las respuestas del servidor en la primera terminal.
+
 ## 💡 Cómo Funciona
 
 *   **`server.py`**: Es el punto de entrada. Utiliza **Scapy** para `sniff` (capturar) el tráfico DHCP en la interfaz especificada. Cada paquete capturado se procesa en un hilo separado para manejar múltiples clientes simultáneamente.
@@ -141,7 +155,7 @@ DHCP-Didactico-Python/
 
 ## ✅ Hoja de Ruta (To-Do)
 
-Este es el estado actual de la implementación del protocolo y las futuras mejoras planeadas. 
+Este es el estado actual de la implementación del protocolo y las futuras mejoras planeadas.
 
 ### Funcionalidades Implementadas
 
