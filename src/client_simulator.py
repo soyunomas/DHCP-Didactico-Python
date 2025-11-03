@@ -10,10 +10,9 @@ from scapy.all import (
     UDP,
     Ether,
     conf,
-    sniff,
+    srp,  # <--- Importamos srp en lugar de sniff y L2Socket
     get_if_hwaddr
 )
-from scapy.arch import L2Socket
 
 # Intentamos importar 'rich', si no está, damos instrucciones claras.
 try:
@@ -73,32 +72,32 @@ class DHCPClientSimulator:
             self.console.print(f"  └─ DHCP Options: {packet[DHCP].options}")
 
     def _send_and_receive(self, packet_to_send, timeout: int = 5):
-        """Envía un paquete y espera una respuesta específica."""
-        try:
-            iface_mac = get_if_hwaddr(self.interface)
-        except Exception:
-             iface_mac = self.mac # Fallback
+        """
+        Envía un paquete y espera una respuesta específica usando srp.
+        Esta es la forma más robusta en Scapy para evitar race conditions.
+        """
+        bpf_filter = f"udp and src port {SERVER_PORT} and dst port {CLIENT_PORT}"
+        self.console.print(f"[dim]Esperando respuesta (filtro BPF: '{bpf_filter}')...[/dim]")
 
-        sock = L2Socket(iface=self.interface)
-        sock.send(packet_to_send)
-
-        filter_str = f"udp and port {CLIENT_PORT} and (ether dst {self.mac} or ether dst {iface_mac} or ether broadcast)"
-        self.console.print(f"[dim]Esperando respuesta (filtro: '{filter_str}')...[/dim]")
-        
         try:
-            response = sniff(
+            # srp (Send and Receive at L2) es ideal para este caso.
+            # Devuelve una tupla (paquetes con respuesta, paquetes sin respuesta)
+            ans, _ = srp(
+                packet_to_send,
                 iface=self.interface,
-                filter=filter_str,
                 timeout=timeout,
-                count=1
+                filter=bpf_filter,
+                verbose=0
             )
-            if response:
-                return response[0]
+
+            if ans:
+                # Nos quedamos con la primera respuesta que coincida con nuestro xid
+                for sent, received in ans:
+                    if received.haslayer(BOOTP) and received[BOOTP].xid == sent[BOOTP].xid:
+                        return received # Devolvemos el paquete recibido
         except Exception as e:
-            self.console.print(f"[bold red]Error al escuchar respuestas: {e}[/bold red]")
-        finally:
-            sock.close()
-        
+            self.console.print(f"[bold red]Error durante el envío/recepción de paquetes: {e}[/bold red]")
+
         return None
 
     def run_discover(self):
@@ -111,7 +110,7 @@ class DHCPClientSimulator:
             Ether(src=self.mac, dst="ff:ff:ff:ff:ff:ff") /
             IP(src="0.0.0.0", dst="255.255.255.255") /
             UDP(sport=CLIENT_PORT, dport=SERVER_PORT) /
-            BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), flags=0x8000) / # <<< ESTA LÍNEA ES CRUCIAL
+            BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), flags=0x8000) /
             DHCP(options=[("message-type", "discover"), ("hostname", HOSTNAME.encode()), "end"])
         )
         self.xid = discover_pkt[BOOTP].xid
@@ -155,7 +154,7 @@ class DHCPClientSimulator:
             Ether(src=self.mac, dst="ff:ff:ff:ff:ff:ff") /
             IP(src="0.0.0.0", dst="255.255.255.255") /
             UDP(sport=CLIENT_PORT, dport=SERVER_PORT) /
-            BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), xid=self.xid, flags=0x8000) / # <<< ESTA LÍNEA ES CRUCIAL
+            BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), xid=self.xid, flags=0x8000) /
             DHCP(options=[
                 ("message-type", "request"),
                 ("requested_addr", self.current_ip),
@@ -172,6 +171,11 @@ class DHCPClientSimulator:
             self.console.print("[bold red]❌ No se recibió respuesta al REQUEST.[/bold red]")
             return False
         
+        # Verificamos que el xid de la respuesta coincide con nuestra petición
+        if ack_pkt[BOOTP].xid != self.xid:
+            self.console.print("[bold red]❌ Se recibió una respuesta, pero con un ID de transacción incorrecto. Ignorando.[/bold red]")
+            return False
+
         msg_type = next((opt[1] for opt in ack_pkt[DHCP].options if opt[0] == 'message-type'), None)
         
         if msg_type == 5: # DHCPACK
@@ -193,6 +197,7 @@ class DHCPClientSimulator:
             self.reset_state()
             return False
         
+        self.console.print(f"[bold red]❌ Se recibió una respuesta DHCP desconocida (tipo: {msg_type}).[/bold red]")
         return False
 
     def run_renew(self):
@@ -203,7 +208,7 @@ class DHCPClientSimulator:
 
         self.console.rule("[bold yellow]Iniciando Renovación de Concesión[/bold yellow]")
 
-        dest_mac = "ff:ff:ff:ff:ff:ff"
+        dest_mac = "ff:ff:ff:ff:ff:ff" # Esto podría ser unicast a la MAC del router, pero broadcast es seguro
         
         renew_pkt = (
             Ether(src=self.mac, dst=dest_mac) /
@@ -233,10 +238,8 @@ class DHCPClientSimulator:
 
         self.console.rule("[bold yellow]Iniciando Liberación de Concesión[/bold yellow]")
         
-        dest_mac = "ff:ff:ff:ff:ff:ff"
-
         release_pkt = (
-            Ether(src=self.mac, dst=dest_mac) /
+            Ether(src=self.mac, dst="ff:ff:ff:ff:ff:ff") / # Release a menudo se envía unicast, pero broadcast también es válido
             IP(src=self.current_ip, dst=self.server_ip) /
             UDP(sport=CLIENT_PORT, dport=SERVER_PORT) /
             BOOTP(ciaddr=self.current_ip, chaddr=bytes.fromhex(self.mac.replace(':', '')), xid=self.xid) /
@@ -244,9 +247,8 @@ class DHCPClientSimulator:
         )
 
         self._print_packet("DHCP RELEASE", release_pkt)
-        sock = L2Socket(iface=self.interface)
-        sock.send(release_pkt)
-        sock.close()
+        # Para release no esperamos respuesta, solo enviamos.
+        srp(release_pkt, iface=self.interface, timeout=1, verbose=0)
         
         self.console.print(f"[bold green]✅ IP {self.current_ip} liberada. El estado del cliente ha sido reseteado.[/bold green]")
         self.reset_state()
@@ -273,16 +275,15 @@ class DHCPClientSimulator:
         )
 
         self._print_packet("DHCP DECLINE", decline_pkt, "magenta")
-        sock = L2Socket(iface=self.interface)
-        sock.send(decline_pkt)
-        sock.close()
+        # Para decline no esperamos respuesta, solo enviamos.
+        srp(decline_pkt, iface=self.interface, timeout=1, verbose=0)
 
         self.console.print(f"[bold green]✅ Conflicto por la IP {self.current_ip} notificado al servidor. Estado reseteado.[/bold green]")
         self.reset_state()
         
     def show_status(self):
         """Muestra el estado actual del cliente simulado."""
-        table = Table(title="[bold]Estado Actual del Cliente DHCP Simulado[/bold]")
+        table = Table(title="[bold red]Estado Actual del Cliente DHCP Simulado[/bold red]")
         table.add_column("Parámetro", style="cyan")
         table.add_column("Valor")
 
