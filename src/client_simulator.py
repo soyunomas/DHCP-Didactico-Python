@@ -91,7 +91,7 @@ class DHCPClientSimulator:
         self.console.print("[dim].. Hilo ARP listener detenido ..[/dim]")
 
     def _print_packet(self, title: str, packet, color: str = "cyan"):
-        self.console.print(f"[{color} bold]TRANSMITIendo -> {title}[/{color} bold]")
+        self.console.print(f"[{color} bold]TRANSMITIENDO -> {title}[/{color} bold]")
         self.console.print(packet.summary())
         if packet.haslayer(DHCP):
             self.console.print(f"  └─ DHCP Options: {packet[DHCP].options}")
@@ -253,6 +253,37 @@ class DHCPClientSimulator:
         self.console.print(f"[bold green]✅ Conflicto por la IP {self.current_ip} notificado. Estado reseteado.[/bold green]")
         self.reset_state()
         
+    # --- NUEVO MÉTODO ---
+    def run_inform(self):
+        if not self.current_ip or not self.server_ip:
+            self.console.print("[bold red]❌ Necesitas tener una IP y conocer el servidor para enviar un DHCPINFORM.[/bold red]")
+            self.console.print("[dim]   (Obtén una concesión primero con la opción 1)[/dim]")
+            return
+        
+        self.console.rule("[bold cyan]Iniciando Petición de Información (DHCPINFORM)[/bold cyan]")
+        self.xid = random.randint(0, 0xFFFFFFFF) # Nueva transacción
+        dest_mac = self._resolve_server_mac()
+
+        param_req_list = [1, 3, 6, 15] # Subnet, Router, DNS, Domain Name
+
+        inform_pkt = (Ether(src=self.mac, dst=dest_mac)/IP(src=self.current_ip, dst=self.server_ip)/UDP(sport=CLIENT_PORT, dport=SERVER_PORT)/BOOTP(ciaddr=self.current_ip, chaddr=bytes.fromhex(self.mac.replace(':', '')), xid=self.xid)/DHCP(options=[("message-type", "inform"), ("param_req_list", param_req_list), "end"]))
+        
+        self._print_packet("DHCP INFORM", inform_pkt, "cyan")
+        ack_pkt = self._send_and_receive(inform_pkt)
+
+        if not ack_pkt or not ack_pkt.haslayer(DHCP):
+            self.console.print("[bold red]❌ No se recibió respuesta al DHCPINFORM.[/bold red]")
+            return
+        
+        msg_type = next((opt[1] for opt in ack_pkt[DHCP].options if isinstance(opt, tuple) and opt[0] == 'message-type'), None)
+        if msg_type == 5: # DHCPACK
+            self._print_packet("DHCPACK Recibido", ack_pkt, "green")
+            self.console.print("[bold green]✅ Opciones de configuración recibidas y actualizadas.[/bold green]")
+            # Actualizamos las opciones pero NO el tiempo de concesión
+            self._process_dhcp_options(ack_pkt)
+        else:
+            self.console.print(f"[bold red]❌ Respuesta inesperada al DHCPINFORM (tipo: {msg_type}).[/bold red]")
+            
     def show_status(self):
         table = Table(title="[bold red]Estado Actual del Cliente DHCP Simulado[/bold red]")
         table.add_column("Parámetro", style="cyan")
@@ -300,7 +331,6 @@ class DHCPClientSimulator:
             if remaining > 0:
                 table.add_row("Tiempo Total Concesión", f"{self.lease_time}s ({self.lease_time / 3600:.1f} horas)")
                 
-                # --- INICIO DE LA MEJORA: Mostrar T1 y T2 ---
                 if self.renewal_time > 0:
                     remaining_t1 = self.renewal_time - elapsed
                     if remaining_t1 > 0:
@@ -318,7 +348,6 @@ class DHCPClientSimulator:
                     else:
                         t2_display = f"{self.rebinding_time}s (pasado)"
                     table.add_row("[bold]Tiempo Re-vinculación (T2)[/bold]", f"[bold yellow]{t2_display}[/bold yellow]")
-                # --- FIN DE LA MEJORA ---
                 
                 table.add_row("[bold]Tiempo Restante[/bold]", f"[bold]{int(remaining)}s[/bold]")
             else:
@@ -343,6 +372,7 @@ def main():
         menu_text.append("\n  [3] Liberar Concesión (DHCPRELEASE)")
         menu_text.append("\n  [4] Rechazar Concesión por conflicto (DHCPDECLINE)")
         menu_text.append("\n  [5] Solo Discover (Para ver la oferta del servidor)")
+        menu_text.append("\n  [8] Pedir solo opciones (DHCPINFORM)") # <-- NUEVA OPCIÓN
         menu_text.append("\n  [q] Salir")
         console.print(Panel(menu_text, title="[bold magenta]Menú de Simulación DHCP[/bold magenta]", width=70))
         choice = console.input("[bold]Opción: [/bold]")
@@ -352,6 +382,7 @@ def main():
         elif choice == '3': client.run_release()
         elif choice == '4': client.run_decline()
         elif choice == '5': client.run_discover()
+        elif choice == '8': client.run_inform() # <-- MANEJO DE LA NUEVA OPCIÓN
         elif choice.lower() == 'q':
             console.print("[bold yellow]¡Hasta luego![/bold yellow]")
             break
