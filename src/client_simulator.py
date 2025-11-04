@@ -3,7 +3,6 @@ import argparse
 import random
 import sys
 import time
-import os
 import threading
 from scapy.all import (
     BOOTP,
@@ -35,11 +34,8 @@ except ImportError:
 CLIENT_PORT = 68
 SERVER_PORT = 67
 HOSTNAME = "Mi-PC-Simulada"
-LOG_DIR = "logs"
-LOG_FILE_PATH = os.path.join(LOG_DIR, "client_simulator.log")
 
-# Generamos una MAC ficticia localmente administrada (el primer octeto es 0x02)
-# para evitar conflictos con hardware real.
+# Generamos una MAC ficticia localmente administrada
 FAKE_MAC = f"02:00:00:{random.randint(0, 255):02x}:{random.randint(0, 255):02x}:{random.randint(0, 255):02x}"
 
 
@@ -59,6 +55,7 @@ class DHCPClientSimulator:
         self._stop_arp_listener = threading.Event()
 
     def reset_state(self):
+        """Resetea el estado del cliente a sus valores iniciales."""
         self.current_ip = None
         self.server_ip = None
         self.server_mac = None
@@ -75,8 +72,7 @@ class DHCPClientSimulator:
 
     def _arp_responder(self):
         """
-        Este método se ejecuta en un hilo separado. Escucha peticiones ARP
-        y responde si alguien pregunta por la IP que nos han asignado.
+        Escucha peticiones ARP y responde si alguien pregunta por nuestra IP.
         """
         bpf_filter = f"arp[6:2] = 1 and ether dst ff:ff:ff:ff:ff:ff"
         self.console.print("[dim].. Hilo ARP listener iniciado ..[/dim]")
@@ -95,7 +91,7 @@ class DHCPClientSimulator:
         self.console.print("[dim].. Hilo ARP listener detenido ..[/dim]")
 
     def _print_packet(self, title: str, packet, color: str = "cyan"):
-        self.console.print(f"[{color} bold]TRANSMITIendo -> {title}[/{color} bold]")
+        self.console.print(f"[{color} bold]TRANSMITIENDO -> {title}[/{color} bold]")
         self.console.print(packet.summary())
         if packet.haslayer(DHCP):
             self.console.print(f"  └─ DHCP Options: {packet[DHCP].options}")
@@ -109,7 +105,6 @@ class DHCPClientSimulator:
             )
             if ans:
                 for sent, received in ans:
-                    # --- AQUÍ ESTABA EL ERROR CORREGIDO: BOOTO -> BOOTP ---
                     if received.haslayer(BOOTP) and received[BOOTP].xid == sent[BOOTP].xid:
                         return received
         except Exception as e:
@@ -131,8 +126,8 @@ class DHCPClientSimulator:
         return "ff:ff:ff:ff:ff:ff"
 
     def run_discover(self):
-        self.console.rule("[bold yellow]1. Iniciando Fase DISCOVER[/bold yellow]")
-        self.reset_state()
+        self.console.rule("[bold yellow]Iniciando Fase DISCOVER[/bold yellow]")
+        self.reset_state() # Un discover siempre empieza de cero
         discover_pkt = (Ether(src=self.mac, dst="ff:ff:ff:ff:ff:ff")/IP(src="0.0.0.0", dst="255.255.255.255")/UDP(sport=CLIENT_PORT, dport=SERVER_PORT)/BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), flags=0x8000)/DHCP(options=[("message-type", "discover"), ("hostname", HOSTNAME.encode()), "end"]))
         self.xid = discover_pkt[BOOTP].xid
         self._print_packet("DHCP DISCOVER", discover_pkt)
@@ -163,7 +158,7 @@ class DHCPClientSimulator:
         if not self.current_ip or not self.server_ip:
             self.console.print("[bold red]❌ No se puede hacer un REQUEST sin una oferta previa.[/bold red]")
             return False
-        self.console.rule("[bold yellow]2. Iniciando Fase REQUEST[/bold yellow]")
+        self.console.rule("[bold yellow]Iniciando Fase REQUEST[/bold yellow]")
         request_pkt = (Ether(src=self.mac, dst="ff:ff:ff:ff:ff:ff")/IP(src="0.0.0.0", dst="255.255.255.255")/UDP(sport=CLIENT_PORT, dport=SERVER_PORT)/BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), xid=self.xid, flags=0x8000)/DHCP(options=[("message-type", "request"), ("requested_addr", self.current_ip), ("server_id", self.server_ip), ("hostname", HOSTNAME.encode()), "end"]))
         self._print_packet("DHCP REQUEST", request_pkt)
         ack_pkt = self._send_and_receive(request_pkt)
@@ -221,7 +216,6 @@ class DHCPClientSimulator:
                 self.console.print("[bold red]❌ Falló la renovación de la concesión.[/bold red]")
         finally:
             self._stop_arp_listener.set()
-            # Enviamos un paquete dummy a nosotros mismos para despertar al sniffer y que pueda terminar
             sendp(Ether(dst=self.mac)/IP(dst=self.current_ip)/UDP(dport=12345), iface=self.interface, verbose=0)
             arp_thread.join(timeout=1)
         
@@ -254,36 +248,40 @@ class DHCPClientSimulator:
         table = Table(title="[bold red]Estado Actual del Cliente DHCP Simulado[/bold red]")
         table.add_column("Parámetro", style="cyan")
         table.add_column("Valor")
+        
         table.add_row("MAC Ficticia", self.mac)
         table.add_row("Hostname", HOSTNAME)
         table.add_row("---", "---")
-        table.add_row("Dirección IP", f"[bold green]{self.current_ip}[/bold green]" if self.current_ip else "[dim]Ninguna[/dim]")
+
+        # --- MEJORA: Lógica para diferenciar entre oferta y concesión confirmada ---
+        if self.current_ip:
+            if self.lease_start_time > 0:
+                ip_display = f"[bold green]{self.current_ip} (Confirmada)[/bold green]"
+                lease_status = f"[green]Activa[/green]"
+            else:
+                ip_display = f"[yellow]{self.current_ip} (Oferta recibida)[/yellow]"
+                lease_status = f"[yellow]Pendiente de confirmación[/yellow]"
+        else:
+            ip_display = "[dim]Ninguna[/dim]"
+            lease_status = "[dim]N/A[/dim]"
+        
+        table.add_row("Dirección IP", ip_display)
         table.add_row("Máscara de Subred", str(self.subnet_mask) if self.subnet_mask else "[dim]N/A[/dim]")
         table.add_row("Router (Gateway)", str(self.router) if self.router else "[dim]N/A[/dim]")
-        table.add_row("Broadcast Address", str(self.broadcast_address) if self.broadcast_address else "[dim]N/A[/dim]")
-        table.add_row("Servidores DNS", str(self.dns_servers) if self.dns_servers else "[dim]N/A[/dim]")
-        table.add_row("Nombre de Dominio", str(self.domain_name) if self.domain_name else "[dim]N/A[/dim]")
         table.add_row("Servidor DHCP", str(self.server_ip) if self.server_ip else "[dim]N/A[/dim]")
         table.add_row("MAC Servidor DHCP", str(self.server_mac) if self.server_mac else "[dim]N/A[/dim]")
         table.add_row("---", "---")
+        
+        table.add_row("Estado de Concesión", lease_status)
         if self.lease_start_time > 0:
             elapsed = time.time() - self.lease_start_time
             remaining = self.lease_time - elapsed
             if remaining > 0:
                 table.add_row("Tiempo Total Concesión", f"{self.lease_time}s ({self.lease_time / 3600:.1f} horas)")
                 table.add_row("[bold]Tiempo Restante[/bold]", f"[bold]{int(remaining)}s[/bold]")
-                if self.renewal_time > 0:
-                    t1_remaining = self.renewal_time - elapsed
-                    status = f"En [bold yellow]{int(t1_remaining)}s[/bold yellow]" if t1_remaining > 0 else "[bold green]¡Ahora![/bold green]"
-                    table.add_row("Renovación (T1)", f"Ocurrirá en {self.renewal_time}s. {status}")
-                if self.rebinding_time > 0:
-                    t2_remaining = self.rebinding_time - elapsed
-                    status = f"En [bold yellow]{int(t2_remaining)}s[/bold yellow]" if t2_remaining > 0 else "[bold red]¡Ahora![/bold red]"
-                    table.add_row("Revinculación (T2)", f"Ocurrirá en {self.rebinding_time}s. {status}")
             else:
-                table.add_row("Estado de Concesión", "[bold red]Expirada[/bold red]")
-        else:
-             table.add_row("Estado de Concesión", "[dim]N/A[/dim]")
+                 table.add_row("Estado de Concesión", "[bold red]Expirada[/bold red]")
+        
         self.console.print(table)
 
 
@@ -291,37 +289,34 @@ def main():
     parser = argparse.ArgumentParser(description="Cliente de simulación DHCP para probar el servidor didáctico.")
     parser.add_argument("--interface", required=True, help="La interfaz de red en la que escuchar (ej: eth0, enp3s0).")
     args = parser.parse_args()
-    os.makedirs(LOG_DIR, exist_ok=True)
-    console = Console(record=True, force_terminal=True, width=120)
-    try:
-        console.log(f"Simulador iniciado. El log se guardará en '{LOG_FILE_PATH}' al salir.")
-        client = DHCPClientSimulator(interface=args.interface, console=console)
-        while True:
-            client.show_status()
-            menu_text = Text("\nElige una acción:", justify="center")
-            menu_text.append("\n  [1] Proceso Completo (DORA: Discover -> Offer -> Request -> Ack)")
-            menu_text.append("\n  [2] Renovar Concesión (DHCPREQUEST Unicast)")
-            menu_text.append("\n  [3] Liberar Concesión (DHCPRELEASE)")
-            menu_text.append("\n  [4] Rechazar Concesión por conflicto (DHCPDECLINE)")
-            menu_text.append("\n  [5] Solo Discover (Para ver la oferta del servidor)")
-            menu_text.append("\n  [q] Salir")
-            console.print(Panel(menu_text, title="[bold magenta]Menú de Simulación DHCP[/bold magenta]", width=70))
-            choice = console.input("[bold]Opción: [/bold]")
-            if choice == '1':
-                if client.run_discover(): client.run_request()
-            elif choice == '2': client.run_renew()
-            elif choice == '3': client.run_release()
-            elif choice == '4': client.run_decline()
-            elif choice == '5': client.run_discover()
-            elif choice.lower() == 'q':
-                console.print("[bold yellow]¡Hasta luego![/bold yellow]")
-                break
-            else:
-                console.print("[bold red]Opción no válida. Inténtalo de nuevo.[/bold red]")
-            console.input("\n[dim]Presiona Enter para continuar...[/dim]")
-    finally:
-        console.save_text(LOG_FILE_PATH)
-        print(f"Log de la sesión guardado en: {LOG_FILE_PATH}")
+    
+    # Se crea una consola simple que imprime en la terminal, sin logs.
+    console = Console()
+    
+    client = DHCPClientSimulator(interface=args.interface, console=console)
+    while True:
+        client.show_status()
+        menu_text = Text("\nElige una acción:", justify="center")
+        menu_text.append("\n  [1] Proceso Completo (DORA: Discover -> Offer -> Request -> Ack)")
+        menu_text.append("\n  [2] Renovar Concesión (DHCPREQUEST Unicast)")
+        menu_text.append("\n  [3] Liberar Concesión (DHCPRELEASE)")
+        menu_text.append("\n  [4] Rechazar Concesión por conflicto (DHCPDECLINE)")
+        menu_text.append("\n  [5] Solo Discover (Para ver la oferta del servidor)")
+        menu_text.append("\n  [q] Salir")
+        console.print(Panel(menu_text, title="[bold magenta]Menú de Simulación DHCP[/bold magenta]", width=70))
+        choice = console.input("[bold]Opción: [/bold]")
+        if choice == '1':
+            if client.run_discover(): client.run_request()
+        elif choice == '2': client.run_renew()
+        elif choice == '3': client.run_release()
+        elif choice == '4': client.run_decline()
+        elif choice == '5': client.run_discover()
+        elif choice.lower() == 'q':
+            console.print("[bold yellow]¡Hasta luego![/bold yellow]")
+            break
+        else:
+            console.print("[bold red]Opción no válida. Inténtalo de nuevo.[/bold red]")
+        console.input("\n[dim]Presiona Enter para continuar...[/dim]")
 
 if __name__ == "__main__":
     if sys.version_info < (3, 7):
