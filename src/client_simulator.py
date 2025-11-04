@@ -1,4 +1,3 @@
-# DHCP-Didactico-Python-main/client_simulator.py
 import argparse
 import random
 import sys
@@ -141,7 +140,13 @@ class DHCPClientSimulator:
         self.current_ip = offer_pkt[BOOTP].yiaddr
         for opt in offer_pkt[DHCP].options:
             if not isinstance(opt, tuple): continue
-            opt_name, opt_value = opt
+            
+            # --- INICIO DE LA CORRECCIÓN ---
+            # Desempaquetado robusto para manejar opciones con múltiples valores
+            opt_name, *opt_values = opt
+            opt_value = opt_values[0] if len(opt_values) == 1 else opt_values
+            # --- FIN DE LA CORRECCIÓN ---
+
             if opt_name == "server_id": self.server_ip = opt_value
             elif opt_name == "subnet_mask": self.subnet_mask = opt_value
             elif opt_name == "router": self.router = opt_value
@@ -168,14 +173,20 @@ class DHCPClientSimulator:
         if ack_pkt[BOOTP].xid != self.xid:
             self.console.print("[bold red]❌ ID de transacción incorrecto. Ignorando.[/bold red]")
             return False
-        msg_type = next((opt[1] for opt in ack_pkt[DHCP].options if opt[0] == 'message-type'), None)
+        msg_type = next((opt[1] for opt in ack_pkt[DHCP].options if isinstance(opt, tuple) and opt[0] == 'message-type'), None)
         if msg_type == 5: # DHCPACK
             self._print_packet("DHCPACK Recibido", ack_pkt, "green")
             self.lease_start_time = time.time()
             self.console.print(f"[bold green]🎉 ¡CONCESIÓN CONFIRMADA! IP: {self.current_ip}[/bold green]")
             for opt in ack_pkt[DHCP].options:
                 if not isinstance(opt, tuple): continue
-                opt_name, opt_value = opt
+                
+                # --- INICIO DE LA CORRECCIÓN ---
+                # Aplicamos la misma corrección aquí para el paquete ACK
+                opt_name, *opt_values = opt
+                opt_value = opt_values[0] if len(opt_values) == 1 else opt_values
+                # --- FIN DE LA CORRECCIÓN ---
+
                 if opt_name == "lease_time": self.lease_time = opt_value
                 elif opt_name == "renewal_time": self.renewal_time = opt_value
                 elif opt_name == "rebinding_time": self.rebinding_time = opt_value
