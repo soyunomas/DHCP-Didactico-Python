@@ -68,6 +68,7 @@ class DHCPClientSimulator:
         self.rebinding_time = 0
         self.lease_start_time = 0
         self.xid = random.randint(0, 0xFFFFFFFF)
+        self.extra_options = {}
 
     def _arp_responder(self):
         """
@@ -90,7 +91,7 @@ class DHCPClientSimulator:
         self.console.print("[dim].. Hilo ARP listener detenido ..[/dim]")
 
     def _print_packet(self, title: str, packet, color: str = "cyan"):
-        self.console.print(f"[{color} bold]TRANSMITIENDO -> {title}[/{color} bold]")
+        self.console.print(f"[{color} bold]TRANSMITIendo -> {title}[/{color} bold]")
         self.console.print(packet.summary())
         if packet.haslayer(DHCP):
             self.console.print(f"  └─ DHCP Options: {packet[DHCP].options}")
@@ -124,9 +125,31 @@ class DHCPClientSimulator:
         self.console.print("[bold yellow]Advertencia: No se pudo resolver la MAC. Usando broadcast L2.[/bold yellow]")
         return "ff:ff:ff:ff:ff:ff"
 
+    def _process_dhcp_options(self, packet):
+        """
+        Helper para procesar y almacenar las opciones de un paquete DHCPOFFER o DHCPACK.
+        """
+        for opt in packet[DHCP].options:
+            if not isinstance(opt, tuple): continue
+            
+            opt_name, *opt_values = opt
+            opt_value = opt_values[0] if len(opt_values) == 1 else opt_values
+
+            if opt_name == "server_id": self.server_ip = opt_value
+            elif opt_name == "subnet_mask": self.subnet_mask = opt_value
+            elif opt_name == "router": self.router = opt_value
+            elif opt_name == "name_server": self.dns_servers = opt_value if isinstance(opt_value, list) else [opt_value]
+            elif opt_name == "lease_time": self.lease_time = opt_value
+            elif opt_name == "renewal_time": self.renewal_time = opt_value
+            elif opt_name == "rebinding_time": self.rebinding_time = opt_value
+            elif opt_name == "domain": self.domain_name = opt_value.decode('utf-8', errors='ignore')
+            elif opt_name == "broadcast_address": self.broadcast_address = opt_value
+            elif opt_name not in ["message-type", "end", "pad"]:
+                self.extra_options[opt_name] = opt_value
+
     def run_discover(self):
         self.console.rule("[bold yellow]Iniciando Fase DISCOVER[/bold yellow]")
-        self.reset_state() # Un discover siempre empieza de cero
+        self.reset_state()
         discover_pkt = (Ether(src=self.mac, dst="ff:ff:ff:ff:ff:ff")/IP(src="0.0.0.0", dst="255.255.255.255")/UDP(sport=CLIENT_PORT, dport=SERVER_PORT)/BOOTP(chaddr=bytes.fromhex(self.mac.replace(':', '')), flags=0x8000)/DHCP(options=[("message-type", "discover"), ("hostname", HOSTNAME.encode()), "end"]))
         self.xid = discover_pkt[BOOTP].xid
         self._print_packet("DHCP DISCOVER", discover_pkt)
@@ -138,24 +161,9 @@ class DHCPClientSimulator:
         self.server_mac = offer_pkt[Ether].src
         self.console.print(f"[bold dim]MAC del servidor detectada y guardada: {self.server_mac}[/bold dim]")
         self.current_ip = offer_pkt[BOOTP].yiaddr
-        for opt in offer_pkt[DHCP].options:
-            if not isinstance(opt, tuple): continue
-            
-            # --- INICIO DE LA CORRECCIÓN ---
-            # Desempaquetado robusto para manejar opciones con múltiples valores
-            opt_name, *opt_values = opt
-            opt_value = opt_values[0] if len(opt_values) == 1 else opt_values
-            # --- FIN DE LA CORRECCIÓN ---
+        
+        self._process_dhcp_options(offer_pkt)
 
-            if opt_name == "server_id": self.server_ip = opt_value
-            elif opt_name == "subnet_mask": self.subnet_mask = opt_value
-            elif opt_name == "router": self.router = opt_value
-            elif opt_name == "name_server": self.dns_servers = opt_value if isinstance(opt_value, list) else [opt_value]
-            elif opt_name == "lease_time": self.lease_time = opt_value
-            elif opt_name == "renewal_time": self.renewal_time = opt_value
-            elif opt_name == "rebinding_time": self.rebinding_time = opt_value
-            elif opt_name == "domain": self.domain_name = opt_value.decode('utf-8', errors='ignore')
-            elif opt_name == "broadcast_address": self.broadcast_address = opt_value
         self.console.print(f"[bold green]✅ Oferta recibida: IP {self.current_ip} del servidor {self.server_ip}[/bold green]")
         return True
 
@@ -178,18 +186,7 @@ class DHCPClientSimulator:
             self._print_packet("DHCPACK Recibido", ack_pkt, "green")
             self.lease_start_time = time.time()
             self.console.print(f"[bold green]🎉 ¡CONCESIÓN CONFIRMADA! IP: {self.current_ip}[/bold green]")
-            for opt in ack_pkt[DHCP].options:
-                if not isinstance(opt, tuple): continue
-                
-                # --- INICIO DE LA CORRECCIÓN ---
-                # Aplicamos la misma corrección aquí para el paquete ACK
-                opt_name, *opt_values = opt
-                opt_value = opt_values[0] if len(opt_values) == 1 else opt_values
-                # --- FIN DE LA CORRECCIÓN ---
-
-                if opt_name == "lease_time": self.lease_time = opt_value
-                elif opt_name == "renewal_time": self.renewal_time = opt_value
-                elif opt_name == "rebinding_time": self.rebinding_time = opt_value
+            self._process_dhcp_options(ack_pkt)
             return True
         elif msg_type == 6: # DHCPNAK
             self._print_packet("DHCPNAK Recibido", ack_pkt, "red")
@@ -221,6 +218,7 @@ class DHCPClientSimulator:
             if ack_pkt and ack_pkt.haslayer(DHCP) and ("message-type", 5) in ack_pkt[DHCP].options:
                 self._print_packet("DHCPACK de Renovación Recibido", ack_pkt, "green")
                 self.lease_start_time = time.time()
+                self._process_dhcp_options(ack_pkt)
                 self.console.print(f"[bold green]✅ Concesión para {self.current_ip} renovada con éxito.[/bold green]")
                 success = True
             else:
@@ -264,7 +262,6 @@ class DHCPClientSimulator:
         table.add_row("Hostname", HOSTNAME)
         table.add_row("---", "---")
 
-        # --- MEJORA: Lógica para diferenciar entre oferta y concesión confirmada ---
         if self.current_ip:
             if self.lease_start_time > 0:
                 ip_display = f"[bold green]{self.current_ip} (Confirmada)[/bold green]"
@@ -279,8 +276,21 @@ class DHCPClientSimulator:
         table.add_row("Dirección IP", ip_display)
         table.add_row("Máscara de Subred", str(self.subnet_mask) if self.subnet_mask else "[dim]N/A[/dim]")
         table.add_row("Router (Gateway)", str(self.router) if self.router else "[dim]N/A[/dim]")
+        table.add_row("Servidores DNS", ", ".join(self.dns_servers) if self.dns_servers else "[dim]N/A[/dim]")
+        table.add_row("Nombre de Dominio", str(self.domain_name) if self.domain_name else "[dim]N/A[/dim]")
         table.add_row("Servidor DHCP", str(self.server_ip) if self.server_ip else "[dim]N/A[/dim]")
         table.add_row("MAC Servidor DHCP", str(self.server_mac) if self.server_mac else "[dim]N/A[/dim]")
+        
+        if self.extra_options:
+            table.add_row("--- Opciones Adicionales ---", "---", style="dim")
+            for key, value in self.extra_options.items():
+                value_str = str(value)
+                if isinstance(value, bytes):
+                    value_str = value.decode('utf-8', errors='ignore')
+                elif isinstance(value, list):
+                    value_str = ", ".join(map(str, value))
+                table.add_row(f"Opción: [bold]{key}[/bold]", value_str)
+        
         table.add_row("---", "---")
         
         table.add_row("Estado de Concesión", lease_status)
@@ -289,6 +299,27 @@ class DHCPClientSimulator:
             remaining = self.lease_time - elapsed
             if remaining > 0:
                 table.add_row("Tiempo Total Concesión", f"{self.lease_time}s ({self.lease_time / 3600:.1f} horas)")
+                
+                # --- INICIO DE LA MEJORA: Mostrar T1 y T2 ---
+                if self.renewal_time > 0:
+                    remaining_t1 = self.renewal_time - elapsed
+                    if remaining_t1 > 0:
+                        m, s = divmod(int(remaining_t1), 60)
+                        t1_display = f"{self.renewal_time}s (en {m}m {s}s)"
+                    else:
+                        t1_display = f"{self.renewal_time}s (pasado)"
+                    table.add_row("[bold]Tiempo Renovación (T1)[/bold]", f"[bold cyan]{t1_display}[/bold cyan]")
+                
+                if self.rebinding_time > 0:
+                    remaining_t2 = self.rebinding_time - elapsed
+                    if remaining_t2 > 0:
+                        m, s = divmod(int(remaining_t2), 60)
+                        t2_display = f"{self.rebinding_time}s (en {m}m {s}s)"
+                    else:
+                        t2_display = f"{self.rebinding_time}s (pasado)"
+                    table.add_row("[bold]Tiempo Re-vinculación (T2)[/bold]", f"[bold yellow]{t2_display}[/bold yellow]")
+                # --- FIN DE LA MEJORA ---
+                
                 table.add_row("[bold]Tiempo Restante[/bold]", f"[bold]{int(remaining)}s[/bold]")
             else:
                  table.add_row("Estado de Concesión", "[bold red]Expirada[/bold red]")
@@ -301,7 +332,6 @@ def main():
     parser.add_argument("--interface", required=True, help="La interfaz de red en la que escuchar (ej: eth0, enp3s0).")
     args = parser.parse_args()
     
-    # Se crea una consola simple que imprime en la terminal, sin logs.
     console = Console()
     
     client = DHCPClientSimulator(interface=args.interface, console=console)
